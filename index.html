@@ -5050,7 +5050,7 @@ let _authToken = null;
 // 서버(Edge Function)에 로그인 검증 요청 → JWT 발급
 async function fetchAuthToken(id, pw){
   try{
-    const r = await fetch(SB_URL + '/functions/v1/login', {
+    const r = await fetch(SB_URL + '/functions/v1/quick-action', {
       method: 'POST',
       headers: { 'Content-Type':'application/json', 'apikey': SB_KEY },
       body: JSON.stringify({ id, pw })
