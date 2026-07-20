@@ -5126,6 +5126,25 @@ let _actsMode = 'none';
 let _actCountMap = new Map();   // lead_id → 총 활동 건수
 let _actsFullyLoaded = new Set(); // 전체 이력을 받아온 lead_id
 
+// ★ 고객사 캐시 — 화면 전환 때마다 6,010건을 다시 받지 않도록
+let _leadsLoadedAt = 0, _leadsInflight = null;
+const _LEADS_TTL = 60*1000;   // 60초
+
+async function _loadLeadsCached(force){
+  if(!force && Array.isArray(allLeads) && allLeads.length
+     && (Date.now() - _leadsLoadedAt) < _LEADS_TTL){
+    console.log('[leads] 캐시 사용:', allLeads.length, '건');
+    return _allLeadsRaw && _allLeadsRaw.length ? _allLeadsRaw : allLeads;
+  }
+  if(_leadsInflight) return _leadsInflight;
+  _leadsInflight = dbQ('leads').catch(()=>[]);
+  try{
+    const rows = await _leadsInflight;
+    if(Array.isArray(rows) && rows.length) _leadsLoadedAt = Date.now();
+    return rows;
+  } finally { _leadsInflight = null; }
+}
+
 // ★ 요약 적재 — 138,000건 대신 6,000줄(약 1.6MB)만 받는다
 async function _loadActSummary(){
   if(testMode) return lg('activities')||[];
@@ -5144,6 +5163,7 @@ async function _loadActSummary(){
     _actCountMap = new Map();
     rows.forEach(a=>{ if(a.act_count) _actCountMap.set(a.lead_id, Number(a.act_count)); });
     _actsMode = 'summary';
+    _actsLoadedAt = Date.now();   // ★ 이 줄이 없어서 저장 때마다 전체를 다시 받았다
     _actsFullyLoaded = new Set();
     console.log('[활동기록] 요약 적재:', rows.length, '줄 /', (Date.now()-t0), 'ms');
     _actsLoadingHide(true);
@@ -5547,6 +5567,7 @@ async function dbQ(table, filters={}){
   return result;
 }
 async function dbI(table,data){
+  if(table==='leads') _leadsLoadedAt = 0;   // ★ 고객사 추가 시 캐시 즉시 폐기
   const row={id:uuid(),created_at:new Date().toISOString(),updated_at:new Date().toISOString(),...data};
   if(testMode){ const a=lg(table); a.unshift(row); ls(table,a); return row; }
   // Realtime 중복 방지: 내가 만든 id를 미리 등록
@@ -5564,6 +5585,7 @@ async function dbI(table,data){
 }
 async function dbU(table,id,data){
   data.updated_at=new Date().toISOString();
+  if(table==='leads') _leadsLoadedAt = 0;   // ★ 고객사 수정 시 캐시 즉시 폐기
   if(testMode){ const a=lg(table),i=a.findIndex(r=>r.id===id); if(i>=0)a[i]={...a[i],...data}; ls(table,a); return true; }
   _trackLocalId(id); // Realtime 중복 방지
   const ok=await sbPatch(table,id,data);
@@ -7269,7 +7291,7 @@ function onAdminPeriodChange(){
 }
 
 async function loadAdmin(){
-  const leadsRaw=await dbQ('leads');
+  const leadsRaw=await _loadLeadsCached();
   const allBase=leadsRaw.filter(l=>l.status!=='deleted');
 
   // ─── 기간 필터 적용 ───
@@ -7294,21 +7316,25 @@ async function loadAdmin(){
   if(!testMode && !allActivities?.length){
     // ★ 대시보드 차트는 기간별 집계가 필요 → 전체 적재
     // ★ 대시보드: 요약을 먼저 받아 화면을 즉시 띄우고,
-    //    기간별 차트에 필요한 전체는 배경에서 받아 차트만 다시 그린다
-    allActivities = await _loadActSummary().catch(()=>[]);
-    if(_actsMode !== 'full'){
+    //    기간별 차트에 필요한 전체는 배경에서 받은 뒤 화면을 통째로 다시 그린다
+    if(_actsMode === 'full' && allActivities?.length){
+      // 이미 전체가 있으면 그대로 사용 (요약으로 낮추지 않는다)
+    } else {
+      allActivities = await _loadActSummary().catch(()=>[]);
+      // ★ 차트용 전체 적재는 세션당 한 번만 (반복 호출 방지)
+      if(!window._chartsFullRequested){
+      window._chartsFullRequested = true;
       setTimeout(()=>{
         _loadAllActivities(true).then(a=>{
           if(!Array.isArray(a) || !a.length) return;
           allActivities = a;
           console.log('[활동기록] 차트용 전체 적재 완료 —', a.length, '건');
-          ['renderMonthlyChart','renderKpiDashboard','renderTeamActChart',
-           'renderBranchTrend','renderTeamActivity','renderActType',
-           'renderSalesRhythm','renderAssignSummary'].forEach(fnName=>{
-            try{ if(typeof window[fnName]==='function') window[fnName](); }catch(_){}
-          });
+          // 차트 함수는 인자를 받으므로 개별 호출하지 않고 화면을 다시 그린다
+          // (이때 _actsMode가 'full'이라 다시 받지 않는다)
+          try{ if(document.getElementById('scr-admin')?.style.display !== 'none') loadAdmin(); }catch(_){}
         }).catch(()=>{});
       }, 600);
+      }
     }
   }
   // next_actions 로드 (팀별 미팅 예정 집계용)
@@ -8634,7 +8660,7 @@ async function loadLeads(){
   //    변경: 고객사·일정만 먼저 받아 목록을 즉시 그리고,
   //          활동기록은 뒤에서 받아 다 오면 화면만 새로 그린다
   const [_leadsRaw, _nasRaw] = await Promise.all([
-    dbQ('leads').catch(()=>[]),
+    _loadLeadsCached(),
     testMode ? Promise.resolve(allNextActions||[]) : dbQ('next_actions').catch(()=>[]),
   ]);
 
@@ -11260,7 +11286,8 @@ async function saveActivity(){
     filterLeads();           // 화면 즉시 갱신
     // 백그라운드로 activities만 새로고침 (leads는 이미 캐시에 있음)
     if(!testMode){
-      _loadAllActivities().then(acts=>{
+      (_actsMode==='full' ? _loadAllActivities() : Promise.resolve(null)).then(acts=>{
+        if(!acts) return;
         if(acts&&acts.length){
           // 덮어쓰지 않고 캐시에 없는 것만 추가 (방금 저장한 act 보존)
           acts.forEach(a=>{ if(!allActivities.find(x=>x.id===a.id)) allActivities.push(a); });
