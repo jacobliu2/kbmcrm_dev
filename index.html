@@ -5206,7 +5206,9 @@ function _actsLoadingShow(n){
 
     if(_actsTotal>0){
       const pct=Math.min(99, Math.round(loaded/_actsTotal*100));
-      if(cnt) cnt.textContent=loaded.toLocaleString()+' / '+_actsTotal.toLocaleString()+'건  ('+pct+'%)';
+      if(cnt) cnt.textContent = (loaded>=_actsTotal)
+        ? loaded.toLocaleString()+'건 — 마무리 중…'
+        : loaded.toLocaleString()+' / '+_actsTotal.toLocaleString()+'건  ('+pct+'%)';
       if(bar) bar.style.width=pct+'%';
     }else{
       if(cnt) cnt.textContent=loaded.toLocaleString()+'건';
@@ -5291,7 +5293,7 @@ async function _fetchAllActivities(){
               'Prefer':'count=estimated'
           }}
         );
-        if(r.status === 416) return [];      // 범위 초과 = 데이터 끝
+        if(r.status === 416) return [];   // 범위 초과 = 데이터 끝 (정상, 오류 아님)
         if(r.ok){
           // 전체 건수 파악 (진행률 표시용) — 예: "0-999/138000"
           if(!_actsTotal){
@@ -7291,7 +7293,23 @@ async function loadAdmin(){
   // activities 먼저 로드 (배정현황 30h+미기록 계산에 필요)
   if(!testMode && !allActivities?.length){
     // ★ 대시보드 차트는 기간별 집계가 필요 → 전체 적재
-    allActivities = await _loadAllActivities(_actsMode!=='full').catch(()=>[]);
+    // ★ 대시보드: 요약을 먼저 받아 화면을 즉시 띄우고,
+    //    기간별 차트에 필요한 전체는 배경에서 받아 차트만 다시 그린다
+    allActivities = await _loadActSummary().catch(()=>[]);
+    if(_actsMode !== 'full'){
+      setTimeout(()=>{
+        _loadAllActivities(true).then(a=>{
+          if(!Array.isArray(a) || !a.length) return;
+          allActivities = a;
+          console.log('[활동기록] 차트용 전체 적재 완료 —', a.length, '건');
+          ['renderMonthlyChart','renderKpiDashboard','renderTeamActChart',
+           'renderBranchTrend','renderTeamActivity','renderActType',
+           'renderSalesRhythm','renderAssignSummary'].forEach(fnName=>{
+            try{ if(typeof window[fnName]==='function') window[fnName](); }catch(_){}
+          });
+        }).catch(()=>{});
+      }, 600);
+    }
   }
   // next_actions 로드 (팀별 미팅 예정 집계용)
   if(!testMode && !allNextActions?.length){
