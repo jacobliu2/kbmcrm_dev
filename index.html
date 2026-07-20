@@ -5118,6 +5118,54 @@ function sbH(){
   };
 }
 // ── activities 전체 페이지네이션 로드 (Supabase max_rows 우회) ──────────
+// ★ 활동기록 로딩 표시 (우측 하단 알약 모양)
+function _actsLoadingShow(n){
+  try{
+    if(!document.getElementById('acts-loading-style')){
+      const st=document.createElement('style');
+      st.id='acts-loading-style';
+      st.textContent='@keyframes actsSpin{to{transform:rotate(360deg)}}'
+        +'@keyframes actsFadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}';
+      document.head.appendChild(st);
+    }
+    let el=document.getElementById('acts-loading-pill');
+    if(!el){
+      el=document.createElement('div');
+      el.id='acts-loading-pill';
+      el.style.cssText='position:fixed;right:16px;bottom:16px;z-index:99998;'
+        +'display:flex;align-items:center;gap:9px;'
+        +'background:rgba(15,23,42,.93);color:#fff;font-size:12px;font-weight:600;'
+        +'padding:9px 15px;border-radius:999px;box-shadow:0 4px 16px rgba(0,0,0,.28);'
+        +'font-family:system-ui,-apple-system,sans-serif;pointer-events:none;'
+        +'transition:opacity .35s ease;animation:actsFadeIn .3s ease';
+      el.innerHTML='<span id="acts-loading-spin" style="width:13px;height:13px;'
+        +'border:2px solid rgba(255,255,255,.28);border-top-color:#fff;border-radius:50%;'
+        +'display:inline-block;animation:actsSpin .7s linear infinite"></span>'
+        +'<span id="acts-loading-txt">활동기록 불러오는 중…</span>';
+      (document.body||document.documentElement).appendChild(el);
+    }
+    el.style.opacity='1';
+    const t=document.getElementById('acts-loading-txt');
+    if(t) t.textContent='활동기록 불러오는 중… '+(n||0).toLocaleString()+'건';
+  }catch(_){}
+}
+
+function _actsLoadingHide(ok){
+  try{
+    const el=document.getElementById('acts-loading-pill');
+    if(!el) return;
+    const sp=document.getElementById('acts-loading-spin');
+    const t=document.getElementById('acts-loading-txt');
+    if(sp) sp.style.display='none';
+    if(t) t.textContent = ok ? '활동기록 준비 완료' : '활동기록 일부 실패';
+    if(!ok) el.style.background='rgba(190,30,30,.93)';
+    setTimeout(()=>{
+      el.style.opacity='0';
+      setTimeout(()=>{ try{ el.remove(); }catch(_){} }, 400);
+    }, ok?1100:2600);
+  }catch(_){}
+}
+
 // ★ 활동기록 중복 적재 방지
 //    같은 화면 진입에서 여러 함수가 각자 전체를 받아오던 것을 하나로 합친다.
 let _actsLoadedAt = 0;      // 마지막 적재 시각
@@ -5146,7 +5194,7 @@ async function _loadAllActivities(force){
 
 async function _fetchAllActivities(){
   const PAGE = 1000;
-  const CONC = 4;    // ★ 동시 요청 수 (너무 많으면 서버가 500으로 거부)
+  const CONC = 8;    // ★ 동시 요청 수 (색인 추가 후 상향)
   const RETRY = 3;   // ★ 실패 시 재시도 횟수
   const all = [];
   // 성능 최적화: 전체 컬럼 대신 목록·히스토리 렌더에 필요한 필드만 조회
@@ -5154,6 +5202,7 @@ async function _fetchAllActivities(){
   const SELECT_COLS = 'id,lead_id,type,content,stage,author,date,created_at';
   const _t0 = Date.now();
   let base = 0, done = false, hardFail = 0;
+  _actsLoadingShow(0);
 
   // 한 페이지를 가져온다. 성공: 배열 / 최종실패: false
   async function getPage(off){
@@ -5192,8 +5241,11 @@ async function _fetchAllActivities(){
     }
 
     base += CONC * PAGE;
+    _actsLoadingShow(all.length);   // ★ 진행 상황 갱신
     if(base > 500000) break; // 안전 상한
   }
+
+  _actsLoadingHide(hardFail === 0);
 
   if(hardFail){
     console.error('[활동기록] ⚠️ '+hardFail+'개 구간을 못 받았습니다 — 데이터가 불완전합니다');
@@ -8465,12 +8517,33 @@ async function loadLeads(){
   const _qtabAll=document.getElementById('qtab-all');
   if(_qtabAll){_qtabAll.style.background='var(--navy)';_qtabAll.style.color='#fff';_qtabAll.style.borderColor='var(--navy)';}
   const _ltb=document.getElementById('leads-tbody'); if(_ltb) _ltb.innerHTML='<tr><td colspan="12" class="loading">불러오는 중...</td></tr>';
-  // leads + activities + next_actions 동시 로드 (타이밍 문제 근본 해결)
-  const [_leadsRaw, _actsRaw, _nasRaw] = await Promise.all([
+  // ★ 화면 먼저 띄우기 (지연 로딩)
+  //    기존: 활동기록 138,000건을 다 받을 때까지 화면이 안 뜸
+  //    변경: 고객사·일정만 먼저 받아 목록을 즉시 그리고,
+  //          활동기록은 뒤에서 받아 다 오면 화면만 새로 그린다
+  const [_leadsRaw, _nasRaw] = await Promise.all([
     dbQ('leads').catch(()=>[]),
-    testMode ? Promise.resolve(lg('activities')) : _loadAllActivities(),
     testMode ? Promise.resolve(allNextActions||[]) : dbQ('next_actions').catch(()=>[]),
   ]);
+
+  // 이미 받아둔 활동기록이 있으면 그대로 쓰고, 없으면 빈 채로 시작
+  const _actsRaw = (Array.isArray(allActivities) && allActivities.length) ? allActivities : [];
+
+  // 활동기록은 기다리지 않고 백그라운드로 받는다
+  if(!_actsRaw.length){
+    const _bgT0 = Date.now();
+    (testMode ? Promise.resolve(lg('activities')) : _loadAllActivities())
+      .then(a => {
+        if(Array.isArray(a) && a.length){
+          allActivities = a;
+          console.log('[활동기록] 백그라운드 완료 — 화면 갱신', a.length, '건 /', (Date.now()-_bgT0), 'ms');
+          try{ filterLeads(); }catch(_){}
+          try{ if(typeof updateFabCounts==='function') updateFabCounts(); }catch(_){}
+        }
+      })
+      .catch(()=>{});
+  }
+
   allActivities = _actsRaw;
   allNextActions = _nasRaw;
   allLeads = _leadsRaw;
