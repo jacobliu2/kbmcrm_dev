@@ -5145,9 +5145,46 @@ async function _loadLeadsCached(force){
   } finally { _leadsInflight = null; }
 }
 
+// ★ next_actions 캐시 — DB관리 진입마다 다시 받지 않도록
+let _nasLoadedAt = 0, _nasInflight = null;
+const _NAS_TTL = 60*1000;
+
+async function _loadNasCached(force){
+  if(testMode) return allNextActions||[];
+  if(!force && Array.isArray(allNextActions) && allNextActions.length
+     && (Date.now() - _nasLoadedAt) < _NAS_TTL){
+    return allNextActions;
+  }
+  if(_nasInflight) return _nasInflight;
+  _nasInflight = dbQ('next_actions').catch(()=>allNextActions||[]);
+  try{
+    const rows = await _nasInflight;
+    if(Array.isArray(rows) && rows.length) _nasLoadedAt = Date.now();
+    return rows;
+  } finally { _nasInflight = null; }
+}
+
 // ★ 요약 적재 — 138,000건 대신 6,000줄(약 1.6MB)만 받는다
-async function _loadActSummary(){
+let _summaryInflight = null;
+
+async function _loadActSummary(force){
   if(testMode) return lg('activities')||[];
+
+  // ★ 이미 받아둔 것이 있고 아직 유효하면 그대로 쓴다 (재적재 방지)
+  if(!force && Array.isArray(allActivities) && allActivities.length
+     && (Date.now() - _actsLoadedAt) < _ACTS_TTL){
+    console.log('[활동기록] 캐시 사용:', allActivities.length, '줄');
+    return allActivities;
+  }
+  // 이미 받는 중이면 그 요청에 올라탄다
+  if(_summaryInflight) return _summaryInflight;
+
+  _summaryInflight = _fetchActSummary();
+  try{ return await _summaryInflight; }
+  finally{ _summaryInflight = null; }
+}
+
+async function _fetchActSummary(){
   const t0 = Date.now();
   _actsLoadingShow(0);
   try{
@@ -5568,6 +5605,7 @@ async function dbQ(table, filters={}){
 }
 async function dbI(table,data){
   if(table==='leads') _leadsLoadedAt = 0;   // ★ 고객사 추가 시 캐시 즉시 폐기
+  if(table==='next_actions') _nasLoadedAt = 0;
   const row={id:uuid(),created_at:new Date().toISOString(),updated_at:new Date().toISOString(),...data};
   if(testMode){ const a=lg(table); a.unshift(row); ls(table,a); return row; }
   // Realtime 중복 방지: 내가 만든 id를 미리 등록
@@ -5586,6 +5624,7 @@ async function dbI(table,data){
 async function dbU(table,id,data){
   data.updated_at=new Date().toISOString();
   if(table==='leads') _leadsLoadedAt = 0;   // ★ 고객사 수정 시 캐시 즉시 폐기
+  if(table==='next_actions') _nasLoadedAt = 0;
   if(testMode){ const a=lg(table),i=a.findIndex(r=>r.id===id); if(i>=0)a[i]={...a[i],...data}; ls(table,a); return true; }
   _trackLocalId(id); // Realtime 중복 방지
   const ok=await sbPatch(table,id,data);
@@ -7317,8 +7356,8 @@ async function loadAdmin(){
     // ★ 대시보드 차트는 기간별 집계가 필요 → 전체 적재
     // ★ 대시보드: 요약을 먼저 받아 화면을 즉시 띄우고,
     //    기간별 차트에 필요한 전체는 배경에서 받은 뒤 화면을 통째로 다시 그린다
-    if(_actsMode === 'full' && allActivities?.length){
-      // 이미 전체가 있으면 그대로 사용 (요약으로 낮추지 않는다)
+    if(allActivities?.length && (Date.now() - _actsLoadedAt) < _ACTS_TTL){
+      // 이미 받아둔 것이 유효하면 그대로 사용 (요약이든 전체든)
     } else {
       allActivities = await _loadActSummary().catch(()=>[]);
       // ★ 차트용 전체 적재는 세션당 한 번만 (반복 호출 방지)
@@ -7339,7 +7378,7 @@ async function loadAdmin(){
   }
   // next_actions 로드 (팀별 미팅 예정 집계용)
   if(!testMode && !allNextActions?.length){
-    allNextActions = await dbQ('next_actions').catch(()=>[]);
+    allNextActions = await _loadNasCached();
   }
   // 대시보드 전역 리드 캐시 (대전 재배정·팀별 미팅 카드에서 사용)
   window._adminLeadsCache = all;
@@ -7411,8 +7450,8 @@ async function loadInsights(){
   renderInsightNeeds(leads);
   renderInsightRevenue(leads);
   renderInflowCal();
-  try{ allActivities = await _loadAllActivities(_actsMode!=='full'); }catch(_){}
-  try{ if(!allNextActions?.length) allNextActions=await dbQ('next_actions'); }catch(_){}
+  try{ allActivities = await _loadAllActivities(); }catch(_){}   // ★ 캐시 우선 (강제 재적재 중단)
+  try{ allNextActions = await _loadNasCached(); }catch(_){}
   const _lam=_rcBuildLastActMapFromCache();
   const _lbi={}; ((allLeads&&allLeads.length)?allLeads:leads||[]).forEach(l=>{ _lbi[l.id]=l; });
   renderRecallWarning(_lam);
@@ -8661,7 +8700,7 @@ async function loadLeads(){
   //          활동기록은 뒤에서 받아 다 오면 화면만 새로 그린다
   const [_leadsRaw, _nasRaw] = await Promise.all([
     _loadLeadsCached(),
-    testMode ? Promise.resolve(allNextActions||[]) : dbQ('next_actions').catch(()=>[]),
+    _loadNasCached(),
   ]);
 
   // 이미 받아둔 활동기록이 있으면 그대로 쓰고, 없으면 빈 채로 시작
@@ -11283,18 +11322,9 @@ async function saveActivity(){
   // (loadLeads는 allActivities를 []로 초기화 후 재로드 → 렌더 공백 발생)
   const scr=document.querySelector('.screen.active')?.id?.replace('screen-','');
   if(scr==='leads'){
-    filterLeads();           // 화면 즉시 갱신
-    // 백그라운드로 activities만 새로고침 (leads는 이미 캐시에 있음)
-    if(!testMode){
-      (_actsMode==='full' ? _loadAllActivities() : Promise.resolve(null)).then(acts=>{
-        if(!acts) return;
-        if(acts&&acts.length){
-          // 덮어쓰지 않고 캐시에 없는 것만 추가 (방금 저장한 act 보존)
-          acts.forEach(a=>{ if(!allActivities.find(x=>x.id===a.id)) allActivities.push(a); });
-          renderLeadsTable();
-        }
-      }).catch(()=>{});
-    }
+    // 방금 저장한 활동은 logActivity가 이미 캐시(allActivities)에 넣었으므로
+    // 전체를 다시 받지 않고 즉시 재렌더만 한다 (실사용 지연 제거)
+    filterLeads();
   } else if(scr==='my-leads'){
     filterMyLeads();
   }
@@ -19441,7 +19471,7 @@ async function loadTmPanel(opts){
   // allActivities 로드 (TM 히스토리 표시용) — 미로드 시 전체 조회
   if(!testMode && (!allActivities || allActivities.length===0)){
     // ★ 대시보드 차트는 기간별 집계가 필요 → 전체 적재
-    allActivities = await _loadAllActivities(_actsMode!=='full').catch(()=>[]);
+    allActivities = await _loadActSummary().catch(()=>[]);   // ★ 요약이면 충분 (전체 강제 적재 중단)
     _teamActCache=null; // 캐시 무효화
   }
   const all=await dbQ('leads');
@@ -21373,7 +21403,7 @@ async function loadBranchScreen(){
   // allActivities 로드 (히스토리/진행내용 표시용)
   if(!testMode && (!allActivities || allActivities.length===0)){
     // ★ 대시보드 차트는 기간별 집계가 필요 → 전체 적재
-    allActivities = await _loadAllActivities(_actsMode!=='full').catch(()=>[]);
+    allActivities = await _loadActSummary().catch(()=>[]);   // ★ 요약이면 충분 (전체 강제 적재 중단)
   }
   const all=await dbQ('leads');
   const myTeams=new Set(TEAM_MAP[curUser.name]||[]);
