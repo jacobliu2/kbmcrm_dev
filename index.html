@@ -5118,7 +5118,33 @@ function sbH(){
   };
 }
 // ── activities 전체 페이지네이션 로드 (Supabase max_rows 우회) ──────────
-async function _loadAllActivities(){
+// ★ 활동기록 중복 적재 방지
+//    같은 화면 진입에서 여러 함수가 각자 전체를 받아오던 것을 하나로 합친다.
+let _actsLoadedAt = 0;      // 마지막 적재 시각
+let _actsInflight = null;   // 진행 중인 요청 (동시 호출 합치기)
+const _ACTS_TTL = 5*60*1000; // 5분
+
+async function _loadAllActivities(force){
+  // 이미 받아둔 것이 있고 5분이 안 지났으면 그대로 쓴다
+  if(!force && Array.isArray(allActivities) && allActivities.length
+     && (Date.now() - _actsLoadedAt) < _ACTS_TTL){
+    console.log('[활동기록] 캐시 사용:', allActivities.length, '건');
+    return allActivities;
+  }
+  // 이미 받는 중이면 그 요청에 올라탄다 (중복 요청 방지)
+  if(_actsInflight) return _actsInflight;
+
+  _actsInflight = _fetchAllActivities();
+  try{
+    const rows = await _actsInflight;
+    _actsLoadedAt = Date.now();
+    return rows;
+  } finally {
+    _actsInflight = null;
+  }
+}
+
+async function _fetchAllActivities(){
   const PAGE = 1000;
   const CONC = 4;    // ★ 동시 요청 수 (너무 많으면 서버가 500으로 거부)
   const RETRY = 3;   // ★ 실패 시 재시도 횟수
@@ -7119,7 +7145,7 @@ async function loadAdmin(){
 
   // activities 먼저 로드 (배정현황 30h+미기록 계산에 필요)
   if(!testMode && !allActivities?.length){
-    allActivities = await dbQ('activities').catch(()=>[]);
+    allActivities = await _loadAllActivities().catch(()=>[]);
   }
   // next_actions 로드 (팀별 미팅 예정 집계용)
   if(!testMode && !allNextActions?.length){
@@ -7195,7 +7221,7 @@ async function loadInsights(){
   renderInsightNeeds(leads);
   renderInsightRevenue(leads);
   renderInflowCal();
-  try{ if(!allActivities?.length) allActivities=await dbQ('activities'); }catch(_){}
+  try{ allActivities = await _loadAllActivities(); }catch(_){}
   try{ if(!allNextActions?.length) allNextActions=await dbQ('next_actions'); }catch(_){}
   const _lam=_rcBuildLastActMapFromCache();
   const _lbi={}; ((allLeads&&allLeads.length)?allLeads:leads||[]).forEach(l=>{ _lbi[l.id]=l; });
@@ -11047,7 +11073,7 @@ async function saveActivity(){
     filterLeads();           // 화면 즉시 갱신
     // 백그라운드로 activities만 새로고침 (leads는 이미 캐시에 있음)
     if(!testMode){
-      dbQ('activities').then(acts=>{
+      _loadAllActivities().then(acts=>{
         if(acts&&acts.length){
           // 덮어쓰지 않고 캐시에 없는 것만 추가 (방금 저장한 act 보존)
           acts.forEach(a=>{ if(!allActivities.find(x=>x.id===a.id)) allActivities.push(a); });
