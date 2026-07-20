@@ -4686,8 +4686,8 @@ function savePotentials(arr){
 
 // ── Supabase 설정 ─────────────────────────────────────────
 const SB_CFG_KEY = 'kbmc_v2_sb';
-let SB_URL = 'https://whmwtqgudllcirhcxqdq.supabase.co';
-let SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndobXd0cWd1ZGxsY2lyaGN4cWRxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxNzA5OTgsImV4cCI6MjA4OTc0Njk5OH0._a-M6O4Neljut4TUI2tgralrDLhFj_kjwinJwy59EqI';
+let SB_URL = 'https://rrzdeoignhxbsbgddesi.supabase.co';
+let SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJyemRlb2lnbmh4YnNiZ2RkZXNpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQwMDIyNjQsImV4cCI6MjA5OTU3ODI2NH0.1qd8PVwnltzm9WGI15_GtwwMyA19fm87-r2traOlnRo';
 let testMode = (location.protocol === 'file:'); // file:// → localStorage, 배포 → Supabase
 
 // ── Supabase Realtime 클라이언트 ──────────────────────────
@@ -27129,5 +27129,7 @@ async function saveNotifPrefs(){
   if (typeof showToast === 'function') showToast('알림 설정이 저장되었습니다','success');
 }
 </script>
+<div style="position:fixed;top:0;left:0;right:0;height:5px;background:#dc2626;z-index:999999;pointer-events:none"></div>
+<div style="position:fixed;top:5px;left:50%;transform:translateX(-50%);background:#dc2626;color:#fff;font-size:11px;font-weight:800;letter-spacing:.5px;padding:2px 12px;border-radius:0 0 8px 8px;z-index:999999;pointer-events:none;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 2px 6px rgba(0,0,0,.2)">개발서버 DEV</div>
 </body>
 </html>
