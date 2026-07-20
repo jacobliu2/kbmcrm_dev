@@ -5118,6 +5118,43 @@ function sbH(){
   };
 }
 // ── activities 전체 페이지네이션 로드 (Supabase max_rows 우회) ──────────
+// ★ 활동기록 적재 상태
+//    'none'    아직 없음
+//    'summary' 요약만 있음 (리드당 최근 1건 + 총건수)
+//    'full'    전체 있음
+let _actsMode = 'none';
+let _actCountMap = new Map();   // lead_id → 총 활동 건수
+let _actsFullyLoaded = new Set(); // 전체 이력을 받아온 lead_id
+
+// ★ 요약 적재 — 138,000건 대신 6,000줄(약 1.6MB)만 받는다
+async function _loadActSummary(){
+  if(testMode) return lg('activities')||[];
+  const t0 = Date.now();
+  _actsLoadingShow(0);
+  try{
+    const r = await fetch(SB_URL+'/rest/v1/rpc/lead_act_summary', {
+      method:'POST',
+      headers:{ ...sbH(), 'Content-Type':'application/json' },
+      body:'{}'
+    });
+    if(!r.ok) throw new Error('summary http '+r.status);
+    const rows = await r.json();
+    if(!Array.isArray(rows)) throw new Error('summary shape');
+
+    _actCountMap = new Map();
+    rows.forEach(a=>{ if(a.act_count) _actCountMap.set(a.lead_id, Number(a.act_count)); });
+    _actsMode = 'summary';
+    _actsFullyLoaded = new Set();
+    console.log('[활동기록] 요약 적재:', rows.length, '줄 /', (Date.now()-t0), 'ms');
+    _actsLoadingHide(true);
+    return rows;
+  }catch(e){
+    console.warn('[활동기록] 요약 실패 — 전체 적재로 대체:', e.message);
+    _actsLoadingHide(true);
+    return await _loadAllActivities(true);   // 요약이 안 되면 기존 방식으로
+  }
+}
+
 // ★ 활동기록 로딩 표시 (화면 중앙 · 클릭은 통과)
 let _actsTotal = 0;   // 전체 건수 (서버가 알려주면 채워짐)
 
@@ -5294,6 +5331,11 @@ async function _fetchAllActivities(){
   }
 
   _actsLoadingHide(hardFail === 0);
+
+  if(hardFail === 0){
+    _actsMode = 'full';           // ★ 전체 적재 완료
+    _actsFullyLoaded = new Set(); // 전체가 있으므로 개별 표시 불필요
+  }
 
   if(hardFail){
     console.error('[활동기록] ⚠️ '+hardFail+'개 구간을 못 받았습니다 — 데이터가 불완전합니다');
@@ -5611,6 +5653,9 @@ async function changeLeadStatus(leadId, {status, stage, note='', autoLog=true, a
   if(!force && !_isAdmin && stage && stage!==prevStage){
     const LOCKED_STAGES=['제안','계약','관리'];
     if(LOCKED_STAGES.includes(stage)){
+      // ★ 요약만 있으면 과거 미팅·제안 기록이 안 보여 잘못 차단된다.
+      //    검증 전에 이 리드의 전체 이력을 반드시 확보한다.
+      try{ await _ensureActivitiesLoaded(leadId); }catch(_){}
       const _actCache = typeof allActivities!=='undefined'&&allActivities?.length ? allActivities : allActivities||[];
       const acts=_actCache.filter(a=>a.lead_id===leadId&&a.type!=='status_change'&&a.type!=='assign');
       if(!acts.length){
@@ -7245,7 +7290,8 @@ async function loadAdmin(){
 
   // activities 먼저 로드 (배정현황 30h+미기록 계산에 필요)
   if(!testMode && !allActivities?.length){
-    allActivities = await _loadAllActivities().catch(()=>[]);
+    // ★ 대시보드 차트는 기간별 집계가 필요 → 전체 적재
+    allActivities = await _loadAllActivities(_actsMode!=='full').catch(()=>[]);
   }
   // next_actions 로드 (팀별 미팅 예정 집계용)
   if(!testMode && !allNextActions?.length){
@@ -7321,7 +7367,7 @@ async function loadInsights(){
   renderInsightNeeds(leads);
   renderInsightRevenue(leads);
   renderInflowCal();
-  try{ allActivities = await _loadAllActivities(); }catch(_){}
+  try{ allActivities = await _loadAllActivities(_actsMode!=='full'); }catch(_){}
   try{ if(!allNextActions?.length) allNextActions=await dbQ('next_actions'); }catch(_){}
   const _lam=_rcBuildLastActMapFromCache();
   const _lbi={}; ((allLeads&&allLeads.length)?allLeads:leads||[]).forEach(l=>{ _lbi[l.id]=l; });
@@ -8578,13 +8624,15 @@ async function loadLeads(){
   const _actsRaw = (Array.isArray(allActivities) && allActivities.length) ? allActivities : [];
 
   // 활동기록은 기다리지 않고 백그라운드로 받는다
-  if(!_actsRaw.length){
+  //  · 아직 없으면 → 요약만 (6,000줄 · 약 1.6MB)
+  //  · 이미 전체가 있으면 → 그대로 둔다 (요약으로 낮추지 않음)
+  if(!_actsRaw.length && _actsMode !== 'full'){
     const _bgT0 = Date.now();
-    (testMode ? Promise.resolve(lg('activities')) : _loadAllActivities())
+    (testMode ? Promise.resolve(lg('activities')) : _loadActSummary())
       .then(a => {
         if(Array.isArray(a) && a.length){
           allActivities = a;
-          console.log('[활동기록] 백그라운드 완료 — 화면 갱신', a.length, '건 /', (Date.now()-_bgT0), 'ms');
+          console.log('[활동기록] 배경 적재 완료 — 화면 갱신', a.length, '줄 /', (Date.now()-_bgT0), 'ms');
           try{ filterLeads(); }catch(_){}
           try{ if(typeof updateFabCounts==='function') updateFabCounts(); }catch(_){}
         }
@@ -15235,15 +15283,21 @@ function _guessOriginalAssignment(lead){
 // 활동로그 캐시 보장 — 해당 lead의 활동이 메모리에 없으면 Supabase에서 fetch
 async function _ensureActivitiesLoaded(leadId){
   if(!leadId) return;
-  const hasInCache = (allActivities||[]).some(a => a.lead_id===leadId);
-  if(hasInCache) return; // 이미 있음
+  // ★ 요약만 있는 경우 '1건 있음'을 '다 있음'으로 오해하면 안 된다
+  if(_actsMode === 'full') return;                 // 전체가 이미 있음
+  if(_actsFullyLoaded.has(leadId)) return;         // 이 리드는 이미 다 받음
   if(testMode) return;   // 테스트 모드는 LS 캐시뿐이라 스킵
 
   try{
     const rows = await sbGet(`activities?select=*&lead_id=eq.${leadId}&order=created_at.desc&limit=200`);
-    if(Array.isArray(rows) && rows.length>0){
+    if(Array.isArray(rows)){
       if(!Array.isArray(allActivities)) window.allActivities = [];
+      // 요약으로 들어와 있던 같은 리드의 줄은 걷어내고 전체로 교체
+      for(let i=allActivities.length-1;i>=0;i--){
+        if(allActivities[i].lead_id===leadId) allActivities.splice(i,1);
+      }
       rows.forEach(r => { if(!allActivities.find(a => a.id===r.id)) allActivities.unshift(r); });
+      _actsFullyLoaded.add(leadId);
     }
   }catch(e){ console.warn('_ensureActivitiesLoaded error', e); }
 }
@@ -19341,7 +19395,8 @@ async function loadTmPanel(opts){
   const _preserveTab = !!(opts && opts.preserveTab);
   // allActivities 로드 (TM 히스토리 표시용) — 미로드 시 전체 조회
   if(!testMode && (!allActivities || allActivities.length===0)){
-    allActivities = await _loadAllActivities().catch(()=>[]);
+    // ★ 대시보드 차트는 기간별 집계가 필요 → 전체 적재
+    allActivities = await _loadAllActivities(_actsMode!=='full').catch(()=>[]);
     _teamActCache=null; // 캐시 무효화
   }
   const all=await dbQ('leads');
@@ -21272,7 +21327,8 @@ function openDistribute(){
 async function loadBranchScreen(){
   // allActivities 로드 (히스토리/진행내용 표시용)
   if(!testMode && (!allActivities || allActivities.length===0)){
-    allActivities = await _loadAllActivities().catch(()=>[]);
+    // ★ 대시보드 차트는 기간별 집계가 필요 → 전체 적재
+    allActivities = await _loadAllActivities(_actsMode!=='full').catch(()=>[]);
   }
   const all=await dbQ('leads');
   const myTeams=new Set(TEAM_MAP[curUser.name]||[]);
@@ -25870,6 +25926,8 @@ function renderLeadsTable(){
   (allActivities||[]).filter(a=>!['assign','status_change'].includes(a.type)).forEach(a=>{
     if(!acts[a.lead_id]) acts[a.lead_id]={latest:null, count:0};
     acts[a.lead_id].count++;
+    // ★ 요약 적재 시 실제 총건수는 act_count에 담겨 온다
+    if(a.act_count) acts[a.lead_id].count = Math.max(acts[a.lead_id].count, Number(a.act_count));
     if(!acts[a.lead_id].latest||new Date(a.created_at)>new Date(acts[a.lead_id].latest.created_at))
       acts[a.lead_id].latest=a;
   });
@@ -25992,6 +26050,8 @@ function renderMyLeadsTable(){
   (allActivities||[]).filter(a=>a.type!=='assign').forEach(a=>{
     if(!acts[a.lead_id]) acts[a.lead_id]={latest:null, count:0};
     acts[a.lead_id].count++;
+    // ★ 요약 적재 시 실제 총건수는 act_count에 담겨 온다
+    if(a.act_count) acts[a.lead_id].count = Math.max(acts[a.lead_id].count, Number(a.act_count));
     if(!acts[a.lead_id].latest||new Date(a.created_at)>new Date(acts[a.lead_id].latest.created_at))
       acts[a.lead_id].latest=a;
   });
