@@ -5118,53 +5118,90 @@ function sbH(){
   };
 }
 // ── activities 전체 페이지네이션 로드 (Supabase max_rows 우회) ──────────
-// ★ 활동기록 로딩 표시 (우측 하단 알약 모양)
+// ★ 활동기록 로딩 표시 (화면 중앙 · 클릭은 통과)
+let _actsTotal = 0;   // 전체 건수 (서버가 알려주면 채워짐)
+
 function _actsLoadingShow(n){
   try{
     if(!document.getElementById('acts-loading-style')){
       const st=document.createElement('style');
       st.id='acts-loading-style';
-      st.textContent='@keyframes actsSpin{to{transform:rotate(360deg)}}'
-        +'@keyframes actsFadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}';
+      st.textContent=
+        '@keyframes actsSpin{to{transform:rotate(360deg)}}'
+       +'@keyframes actsPop{from{opacity:0;transform:scale(.92)}to{opacity:1;transform:scale(1)}}'
+       +'@keyframes actsPulse{0%,100%{opacity:.5}50%{opacity:1}}';
       document.head.appendChild(st);
     }
-    let el=document.getElementById('acts-loading-pill');
-    if(!el){
-      el=document.createElement('div');
-      el.id='acts-loading-pill';
-      el.style.cssText='position:fixed;right:16px;bottom:16px;z-index:99998;'
-        +'display:flex;align-items:center;gap:9px;'
-        +'background:rgba(15,23,42,.93);color:#fff;font-size:12px;font-weight:600;'
-        +'padding:9px 15px;border-radius:999px;box-shadow:0 4px 16px rgba(0,0,0,.28);'
-        +'font-family:system-ui,-apple-system,sans-serif;pointer-events:none;'
-        +'transition:opacity .35s ease;animation:actsFadeIn .3s ease';
-      el.innerHTML='<span id="acts-loading-spin" style="width:13px;height:13px;'
-        +'border:2px solid rgba(255,255,255,.28);border-top-color:#fff;border-radius:50%;'
-        +'display:inline-block;animation:actsSpin .7s linear infinite"></span>'
-        +'<span id="acts-loading-txt">활동기록 불러오는 중…</span>';
-      (document.body||document.documentElement).appendChild(el);
+    let wrap=document.getElementById('acts-loading-wrap');
+    if(!wrap){
+      wrap=document.createElement('div');
+      wrap.id='acts-loading-wrap';
+      wrap.style.cssText='position:fixed;inset:0;z-index:99998;display:flex;'
+        +'align-items:center;justify-content:center;pointer-events:none;'
+        +'transition:opacity .4s ease';
+      wrap.innerHTML=
+        '<div style="background:rgba(15,23,42,.95);color:#fff;padding:26px 34px;'
+       +'border-radius:18px;box-shadow:0 16px 48px rgba(0,0,0,.4);min-width:270px;'
+       +'text-align:center;font-family:system-ui,-apple-system,sans-serif;'
+       +'animation:actsPop .3s ease">'
+       +  '<div id="acts-spin" style="width:38px;height:38px;margin:0 auto 14px;'
+       +  'border:3px solid rgba(255,255,255,.18);border-top-color:#5b9dff;'
+       +  'border-radius:50%;animation:actsSpin .8s linear infinite"></div>'
+       +  '<div id="acts-title" style="font-size:14px;font-weight:700">'
+       +  '활동기록 불러오는 중</div>'
+       +  '<div id="acts-count" style="font-size:12px;color:#94a3b8;margin-top:6px">'
+       +  '준비 중…</div>'
+       +  '<div style="margin-top:14px;height:5px;background:rgba(255,255,255,.14);'
+       +  'border-radius:99px;overflow:hidden">'
+       +    '<div id="acts-bar" style="height:100%;width:0%;background:#5b9dff;'
+       +    'border-radius:99px;transition:width .4s ease"></div>'
+       +  '</div>'
+       +  '<div id="acts-sub" style="font-size:11px;color:#64748b;margin-top:10px;'
+       +  'animation:actsPulse 2s ease-in-out infinite">목록은 지금 바로 쓰실 수 있습니다</div>'
+       +'</div>';
+      (document.body||document.documentElement).appendChild(wrap);
     }
-    el.style.opacity='1';
-    const t=document.getElementById('acts-loading-txt');
-    if(t) t.textContent='활동기록 불러오는 중… '+(n||0).toLocaleString()+'건';
+    wrap.style.opacity='1';
+
+    const cnt=document.getElementById('acts-count');
+    const bar=document.getElementById('acts-bar');
+    const loaded=n||0;
+
+    if(_actsTotal>0){
+      const pct=Math.min(99, Math.round(loaded/_actsTotal*100));
+      if(cnt) cnt.textContent=loaded.toLocaleString()+' / '+_actsTotal.toLocaleString()+'건  ('+pct+'%)';
+      if(bar) bar.style.width=pct+'%';
+    }else{
+      if(cnt) cnt.textContent=loaded.toLocaleString()+'건';
+      if(bar) bar.style.width=Math.min(90, loaded/2000)+'%';
+    }
   }catch(_){}
 }
 
 function _actsLoadingHide(ok){
   try{
-    const el=document.getElementById('acts-loading-pill');
-    if(!el) return;
-    const sp=document.getElementById('acts-loading-spin');
-    const t=document.getElementById('acts-loading-txt');
+    const wrap=document.getElementById('acts-loading-wrap');
+    if(!wrap) return;
+    const sp=document.getElementById('acts-spin');
+    const ti=document.getElementById('acts-title');
+    const ba=document.getElementById('acts-bar');
+    const su=document.getElementById('acts-sub');
     if(sp) sp.style.display='none';
-    if(t) t.textContent = ok ? '활동기록 준비 완료' : '활동기록 일부 실패';
-    if(!ok) el.style.background='rgba(190,30,30,.93)';
+    if(su) su.style.display='none';
+    if(ok){
+      if(ti) ti.textContent='활동기록 준비 완료';
+      if(ba){ ba.style.width='100%'; ba.style.background='#22c55e'; }
+    }else{
+      if(ti) ti.textContent='활동기록 일부를 못 받았습니다';
+      if(ba) ba.style.background='#ef4444';
+    }
     setTimeout(()=>{
-      el.style.opacity='0';
-      setTimeout(()=>{ try{ el.remove(); }catch(_){} }, 400);
-    }, ok?1100:2600);
+      wrap.style.opacity='0';
+      setTimeout(()=>{ try{ wrap.remove(); }catch(_){} }, 450);
+    }, ok?900:2800);
   }catch(_){}
 }
+
 
 // ★ 활동기록 중복 적재 방지
 //    같은 화면 진입에서 여러 함수가 각자 전체를 받아오던 것을 하나로 합친다.
@@ -5214,11 +5251,22 @@ async function _fetchAllActivities(){
               ...sbH(),
               'Range-Unit':'items',
               'Range': off+'-'+(off+PAGE-1),
-              'Prefer':'count=none'
+              'Prefer':'count=estimated'
           }}
         );
         if(r.status === 416) return [];      // 범위 초과 = 데이터 끝
-        if(r.ok) return await r.json().catch(()=>[]);
+        if(r.ok){
+          // 전체 건수 파악 (진행률 표시용) — 예: "0-999/138000"
+          if(!_actsTotal){
+            const cr = r.headers.get('content-range') || '';
+            const tot = cr.split('/')[1];
+            if(tot && tot !== '*'){
+              const t = parseInt(tot, 10);
+              if(!isNaN(t) && t > 0) _actsTotal = t;
+            }
+          }
+          return await r.json().catch(()=>[]);
+        }
         // 500 등 일시적 오류 → 잠시 쉬었다 재시도
         await new Promise(s=>setTimeout(s, 400*(t+1)));
       }catch(e){
