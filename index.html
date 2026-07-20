@@ -4686,8 +4686,8 @@ function savePotentials(arr){
 
 // ── Supabase 설정 ─────────────────────────────────────────
 const SB_CFG_KEY = 'kbmc_v2_sb';
-let SB_URL = 'https://rrzdeoignhxbsbgddesi.supabase.co';
-let SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJyemRlb2lnbmh4YnNiZ2RkZXNpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQwMDIyNjQsImV4cCI6MjA5OTU3ODI2NH0.1qd8PVwnltzm9WGI15_GtwwMyA19fm87-r2traOlnRo';
+let SB_URL = 'https://whmwtqgudllcirhcxqdq.supabase.co';
+let SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndobXd0cWd1ZGxsY2lyaGN4cWRxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQxNzA5OTgsImV4cCI6MjA4OTc0Njk5OH0._a-M6O4Neljut4TUI2tgralrDLhFj_kjwinJwy59EqI';
 let testMode = (location.protocol === 'file:'); // file:// → localStorage, 배포 → Supabase
 
 // ── Supabase Realtime 클라이언트 ──────────────────────────
@@ -5050,7 +5050,7 @@ let _authToken = null;
 // 서버(Edge Function)에 로그인 검증 요청 → JWT 발급
 async function fetchAuthToken(id, pw){
   try{
-    const r = await fetch(SB_URL + '/functions/v1/quick-action', {
+    const r = await fetch(SB_URL + '/functions/v1/login', {
       method: 'POST',
       headers: { 'Content-Type':'application/json', 'apikey': SB_KEY },
       body: JSON.stringify({ id, pw })
@@ -5120,32 +5120,51 @@ function sbH(){
 // ── activities 전체 페이지네이션 로드 (Supabase max_rows 우회) ──────────
 async function _loadAllActivities(){
   const PAGE = 1000;
-  let offset = 0;
+  const CONC = 10;   // ★ 동시에 보낼 요청 수 (순차 → 병렬)
   const all = [];
   // 성능 최적화: 전체 컬럼 대신 목록·히스토리 렌더에 필요한 필드만 조회
   // 제외: updated_at, deleted_at 등 대용량·비사용 컬럼
   const SELECT_COLS = 'id,lead_id,type,content,stage,author,date,created_at';
-  while(true){
-    try{
-      const r = await fetch(
-        SB_URL+'/rest/v1/activities?select='+SELECT_COLS+'&order=created_at.desc',
-        { headers:{
-            ...sbH(),
-            'Range-Unit':'items',
-            'Range': offset+'-'+(offset+PAGE-1),
-            'Prefer':'count=none'
-        }}
-      );
-      if(!r.ok) break;
-      const rows = await r.json().catch(()=>[]);
-      if(!rows||!rows.length) break;
+  const _t0 = Date.now();
+  let base = 0, done = false, failed = 0;
+
+  while(!done){
+    // 한 묶음(CONC개)을 동시에 요청
+    const reqs = [];
+    for(let k = 0; k < CONC; k++){
+      const off = base + k * PAGE;
+      reqs.push((async () => {
+        try{
+          const r = await fetch(
+            SB_URL+'/rest/v1/activities?select='+SELECT_COLS+'&order=created_at.desc',
+            { headers:{
+                ...sbH(),
+                'Range-Unit':'items',
+                'Range': off+'-'+(off+PAGE-1),
+                'Prefer':'count=none'
+            }}
+          );
+          if(!r.ok) return null;
+          return await r.json().catch(()=>[]);
+        }catch(e){ failed++; return null; }
+      })());
+    }
+
+    const results = await Promise.all(reqs);
+
+    // 요청 순서대로 합침 → 기존과 동일한 정렬 순서 유지
+    for(const rows of results){
+      if(!rows || !rows.length){ done = true; continue; }
       all.push(...rows);
-      if(rows.length < PAGE) break;
-      offset += PAGE;
-      if(offset > 500000) break; // 안전 상한
-    }catch(e){ console.warn('_loadAllActivities err:',e.message); break; }
+      if(rows.length < PAGE) done = true;
+    }
+
+    base += CONC * PAGE;
+    if(base > 500000) break; // 안전 상한
   }
-  console.log('[활동기록] 전체 로드 완료:', all.length,'건');
+
+  if(failed) console.warn('[활동기록] 실패한 요청 '+failed+'건');
+  console.log('[활동기록] 전체 로드 완료:', all.length, '건 /', (Date.now()-_t0), 'ms');
   return all;
 }
 
@@ -17590,12 +17609,30 @@ function calcLeadGrade(lead, acts){
 let _atriskLeads = []; // 이탈위험 고객 전역 캐시
 function checkAtrisk(leads, acts){
   const now=Date.now();
+  // ★ 활동기록 색인: lead_id → 활동 배열 (한 번만 만든다)
+  //    기존: 고객사마다 전체 활동을 훑음 → N×M
+  //    변경: 색인 1회 생성 후 즉시 조회      → N+M  (결과는 동일)
+  const _idx=new Map();
+  for(let i=0;i<(acts||[]).length;i++){
+    const a=acts[i];
+    if(a.type==='assign') continue;
+    let arr=_idx.get(a.lead_id);
+    if(!arr){ arr=[]; _idx.set(a.lead_id,arr); }
+    arr.push(a);
+  }
   return (leads||[]).filter(l=>{
     if(['drop','deleted','관리'].includes(l.current_stage||l.status)) return false;
     if(l.current_stage==='계약') return false;
-    const leadActs=(acts||[]).filter(a=>a.lead_id===l.id&&a.type!=='assign');
-    const last=leadActs.sort((a,b)=>new Date(b.created_at)-new Date(a.created_at))[0];
-    const days=last?Math.floor((now-new Date(last.created_at).getTime())/86400000)
+    const leadActs=_idx.get(l.id);
+    // 가장 최근 활동 1건 찾기 (정렬 대신 최댓값 탐색)
+    let last=null, lastT=-1;
+    if(leadActs){
+      for(let j=0;j<leadActs.length;j++){
+        const t=new Date(leadActs[j].created_at).getTime();
+        if(t>lastT){ lastT=t; last=leadActs[j]; }
+      }
+    }
+    const days=last?Math.floor((now-lastT)/86400000)
                    :Math.floor((now-new Date(l.assigned_at||l.created_at||0).getTime())/86400000);
     return days>=14;
   });
