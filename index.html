@@ -1150,6 +1150,7 @@ body.dark-mode *::-webkit-scrollbar-thumb:hover{background:rgba(180,208,232,.30)
         <div class="ud-item" onclick="openNotifPrefs()"><svg class="li" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>알림 설정</div>
         <div class="ud-item" onclick="showShortcutHelp()"><svg class="li" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h12"/></svg> 단축키 도움말</div>
         <div class="ud-item" onclick="toggleDarkMode()" id="dark-mode-item"><svg class="li" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>다크모드</div>
+        <div class="ud-item" id="ud-impersonate" style="display:none" onclick="openImpersonatePicker()"><svg class="li" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>다른 계정으로 보기</div>
         <div class="ud-item danger" onclick="doLogout()"><svg class="li" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>로그아웃</div>
       </div>
     </div>
@@ -5899,6 +5900,7 @@ function doLogout(){
   clearAppTimers();          // ★ 주기 타이머 전부 정리 (누적 방지)
   try{ _authToken=null; localStorage.removeItem(JWT_KEY); }catch(e){}  // ★ JWT 폐기
   localStorage.removeItem(SK);curUser=null;
+  _impersonator=null; try{ _resetDataCaches(); _renderImpersonationBanner(); }catch(_){}  // ★ 대행·캐시 정리
   document.getElementById('app').style.display='none';
   document.getElementById('login-screen').style.display='flex';
 }
@@ -5959,6 +5961,125 @@ function goHome(){
   }catch(e){ console.warn('goHome error',e); }
 }
 
+// ════════════════════════════════════════════════════════
+//  대행뷰 (관리자가 다른 계정 화면을 그대로 보고 조작)
+//  · _impersonator : 실제 로그인한 관리자 (대행 중일 때만 값 있음)
+//  · curUser       : 실제 화면에 적용되는 신분 (대행 중이면 대상)
+//  · 대행 상태는 메모리에만 둔다 (localStorage 금지) → 새로고침하면 관리자로 복귀
+// ════════════════════════════════════════════════════════
+let _impersonator = null;
+
+// 신분 전환 시 이전 사용자의 데이터가 남지 않도록 전부 비운다
+function _resetDataCaches(){
+  try{
+    allLeads=[]; _allLeadsRaw=[]; filtered=[]; if(selIds&&selIds.clear) selIds.clear();
+    allActivities=[]; allNextActions=[];
+    _leadsLoadedAt=0; _actsLoadedAt=0; _nasLoadedAt=0;
+    _actsMode='none'; _actCountMap=new Map(); _actsFullyLoaded=new Set();
+    _leadsInflight=null; _actsInflight=null; _nasInflight=null; _summaryInflight=null;
+    if(typeof _actsTotal!=='undefined') _actsTotal=0;
+    window._chartsFullRequested=false;
+  }catch(e){ console.warn('_resetDataCaches', e); }
+}
+
+function enterImpersonation(userId){
+  const real = _impersonator || curUser;
+  if(real?.role !== 'admin'){ if(typeof showToast==='function') showToast('관리자만 대행할 수 있습니다','error'); return; }
+  const target = (getAccs()||[]).find(a=>a.id===userId);
+  if(!target){ if(typeof showToast==='function') showToast('계정을 찾을 수 없습니다','error'); return; }
+  if(target.id === real.id){ if(typeof showToast==='function') showToast('본인 계정입니다','info'); return; }
+
+  _impersonator = real;                 // 실제 관리자 보관
+  curUser = { id:target.id, name:target.name, role:target.role, branch:target.branch };
+  _resetDataCaches();                   // ★ 이전 신분 데이터 제거
+  _closeImpersonatePicker();
+  _renderImpersonationBanner();
+  startApp();                           // 대상 신분으로 화면 전체 재구성
+}
+
+function exitImpersonation(){
+  if(!_impersonator) return;
+  curUser = _impersonator;
+  _impersonator = null;
+  _resetDataCaches();                   // ★ 대행 데이터 제거 후 관리자 데이터 재적재
+  _renderImpersonationBanner();
+  startApp();
+}
+
+// 대행 중임을 알리는 상단 띠 (버튼만 클릭 가능, 화면은 막지 않음)
+function _renderImpersonationBanner(){
+  let el = document.getElementById('imp-banner');
+  if(!_impersonator){ if(el) el.remove(); document.body.style.removeProperty('padding-top'); return; }
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'imp-banner';
+    el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99997;'
+      +'background:#b45309;color:#fff;font-size:13px;font-weight:700;'
+      +'padding:7px 14px;display:flex;align-items:center;justify-content:center;gap:14px;'
+      +'font-family:system-ui,-apple-system,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.25)';
+    document.body.appendChild(el);
+  }
+  const roleLabel = (typeof RL!=='undefined' && RL[curUser.role]) || curUser.role;
+  el.innerHTML = '👁 관리자 <b style="margin:0 2px">'+_impersonator.name+'</b> 님이 '
+    +'<b style="margin:0 2px">'+curUser.name+'</b> ('+roleLabel+') 화면을 대행 중입니다'
+    +'<button onclick="exitImpersonation()" style="margin-left:6px;background:#fff;color:#b45309;'
+    +'border:none;border-radius:14px;padding:4px 14px;font-size:12px;font-weight:800;cursor:pointer">↩ 원래대로</button>';
+}
+
+// 대행 대상 선택창
+function openImpersonatePicker(){
+  const real = _impersonator || curUser;
+  if(real?.role !== 'admin'){ if(typeof showToast==='function') showToast('관리자만 사용할 수 있습니다','error'); return; }
+  if(typeof toggleUserDrop==='function'){ try{ document.getElementById('user-dropdown').classList.remove('open'); }catch(_){} }
+
+  const accs = (getAccs()||[]).filter(a=>a.id!==real.id)
+    .sort((a,b)=>(a.role+a.branch+a.name).localeCompare(b.role+b.branch+b.name,'ko'));
+
+  let ov = document.getElementById('imp-picker');
+  if(ov) ov.remove();
+  ov = document.createElement('div');
+  ov.id = 'imp-picker';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.45);'
+    +'display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,sans-serif';
+  ov.onclick = (e)=>{ if(e.target===ov) _closeImpersonatePicker(); };
+
+  const rows = accs.map(a=>{
+    const rl = (typeof RL!=='undefined' && RL[a.role]) || a.role;
+    return '<div class="imp-row" data-name="'+(a.name+' '+rl+' '+(a.branch||'')).toLowerCase()+'" '
+      +'onclick="enterImpersonation(\''+a.id+'\')" '
+      +'style="padding:10px 14px;border-radius:10px;cursor:pointer;display:flex;align-items:center;gap:10px" '
+      +'onmouseover="this.style.background=\'#f1f5f9\'" onmouseout="this.style.background=\'\'">'
+      +'<span style="width:30px;height:30px;border-radius:50%;background:#1e293b;color:#fff;display:flex;'
+      +'align-items:center;justify-content:center;font-weight:700;font-size:13px">'+a.name.charAt(0)+'</span>'
+      +'<span style="flex:1"><b>'+a.name+'</b> <span style="color:#64748b;font-size:12px">· '+rl
+      +(a.branch?(' · '+a.branch):'')+'</span></span>'
+      +'<span style="color:#94a3b8;font-size:18px">›</span></div>';
+  }).join('');
+
+  ov.innerHTML = '<div style="background:#fff;border-radius:16px;width:min(440px,92vw);max-height:80vh;'
+    +'display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.35);overflow:hidden">'
+    +'<div style="padding:16px 18px 10px"><div style="font-size:16px;font-weight:800;color:#0f172a">다른 계정으로 보기</div>'
+    +'<div style="font-size:12px;color:#64748b;margin-top:3px">선택한 계정의 화면을 그대로 보고 조작할 수 있습니다</div></div>'
+    +'<div style="padding:0 14px 8px"><input id="imp-search" placeholder="이름·역할·지점 검색" autocomplete="off" '
+    +'oninput="_impFilter(this.value)" style="width:100%;padding:9px 12px;border:1.5px solid #e2e8f0;'
+    +'border-radius:10px;font-size:14px;font-family:inherit;box-sizing:border-box"></div>'
+    +'<div id="imp-list" style="overflow-y:auto;padding:0 8px 8px">'+rows+'</div>'
+    +'<div style="padding:10px 14px;border-top:1px solid #f1f5f9;text-align:right">'
+    +'<button onclick="_closeImpersonatePicker()" style="background:#f1f5f9;border:none;border-radius:10px;'
+    +'padding:8px 18px;font-size:13px;font-weight:700;cursor:pointer;color:#475569">닫기</button></div></div>';
+
+  document.body.appendChild(ov);
+  setTimeout(()=>{ const s=document.getElementById('imp-search'); if(s) s.focus(); }, 50);
+}
+
+function _impFilter(q){
+  q = (q||'').toLowerCase().trim();
+  document.querySelectorAll('#imp-list .imp-row').forEach(r=>{
+    r.style.display = (!q || (r.getAttribute('data-name')||'').includes(q)) ? '' : 'none';
+  });
+}
+function _closeImpersonatePicker(){ const ov=document.getElementById('imp-picker'); if(ov) ov.remove(); }
+
 function startApp(){
   clearAppTimers();    // ★ 재진입 시 기존 타이머 정리 (중복 실행 방지)
 
@@ -5990,6 +6111,8 @@ function startApp(){
   (document.getElementById('user-avatar')||{}).textContent=curUser.name.charAt(0);
   (document.getElementById('ud-name')||{}).textContent=curUser.name;
   (document.getElementById('ud-role')||{}).textContent=RL[curUser.role]||curUser.role;
+  const _impItem=document.getElementById('ud-impersonate');
+  if(_impItem) _impItem.style.display=((_impersonator||curUser)?.role==='admin')?'':'none';
   const nav=document.getElementById('main-nav');
   nav.innerHTML=(NAV_CFG[curUser.role]||[]).map(n=>`<button class="nb" data-s="${n.id}" onclick="showScreen('${n.id}',this)">${n.l}${n.id==='leads'?'<span class="nav-recall-badge" style="display:none;font-size:9px;font-weight:800;background:var(--err);color:#fff;border-radius:8px;padding:1px 5px;margin-left:5px;vertical-align:middle"></span>':''}</button>`).join('');
   initData();
