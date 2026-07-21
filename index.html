@@ -4692,6 +4692,9 @@ function savePotentials(arr){
 const SB_CFG_KEY = 'kbmc_v2_sb';
 let SB_URL = 'https://rrzdeoignhxbsbgddesi.supabase.co';
 let SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJyemRlb2lnbmh4YnNiZ2RkZXNpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQwMDIyNjQsImV4cCI6MjA5OTU3ODI2NH0.1qd8PVwnltzm9WGI15_GtwwMyA19fm87-r2traOlnRo';
+
+// ★ 단계 정규화 맵 — 유일한 진실(구단계명 → 신단계). 복붙 금지, 오직 이 한 곳만 수정한다.
+const STAGE_NORMALIZE = {'관리고객':'관리','초기접촉':'접촉','미팅':'상담','협의':'제안','상담중':'접촉','제안완료':'제안'};
 let testMode = (location.protocol === 'file:'); // file:// → localStorage, 배포 → Supabase
 
 // ── Supabase Realtime 클라이언트 ──────────────────────────
@@ -6516,7 +6519,7 @@ function _displayTeamLabel(lead){
 function stageBadge(stage){
   if(!stage) return '<span style="color:var(--gray-300);font-size:12px">—</span>';
   // 구 단계명 표시 시 자동 변환
-  const _stageMap={'관리고객':'관리','초기접촉':'접촉','미팅':'상담','협의':'제안','상담중':'접촉','제안완료':'제안'};
+  const _stageMap=STAGE_NORMALIZE;
   const s=_stageMap[stage]||stage;
   const cls={'배정':'badge-stage-green','접촉':'badge-stage-sky','상담':'badge-stage-sky','제안':'badge-stage-sky','계약':'badge-stage-contract','관리':'badge-stage-blue','보류':'badge-stage-orange','드랍':'badge-stage-red'}[s]||'badge-pending';
   return `<span class="badge ${cls}">${s}</span>`;
@@ -10309,7 +10312,7 @@ function openActM(lid,cname){
 
   // ── 다운그레이드 차단 비활성화 시각화 (팀장만, 관리자는 모든 버튼 활성) ──
   const _stageOrder = {'배정':1, '접촉':2, '상담':3, '제안':4, '계약':5, '관리':6};
-  const _stageMap = {'관리고객':'관리','초기접촉':'접촉','미팅':'상담','협의':'제안','상담중':'접촉','제안완료':'제안'};
+  const _stageMap = STAGE_NORMALIZE;
   const _curNorm = _stageMap[curStage] || curStage;
   const _curIsHoldDrop = _curNorm === '보류' || _curNorm === '드랍';
   const _isTeam = curUser?.role === 'team';
@@ -11220,7 +11223,7 @@ function pickStage(el, stage){
   // 현재 리드의 단계가 더 높을 때 낮은 단계 선택 시도하면 안내 후 차단
   if(curUser?.role === 'team'){
     const _stageOrder = {'배정':1, '접촉':2, '상담':3, '제안':4, '계약':5, '관리':6};
-    const _stageMap = {'관리고객':'관리','초기접촉':'접촉','미팅':'상담','협의':'제안','상담중':'접촉','제안완료':'제안'};
+    const _stageMap = STAGE_NORMALIZE;
     const lid = document.getElementById('act-lead-id')?.value;
     const _lead = lid ? (allLeads||[]).find(l => l.id === lid) : null;
     const _curStage = _stageMap[_lead?.current_stage] || _lead?.current_stage;
@@ -11266,7 +11269,7 @@ function pickStage(el, stage){
   if(_dropLabel && stage==='드랍'){
     const _lid = document.getElementById('act-lead-id')?.value;
     const _lead = _lid ? (allLeads||[]).find(l=>l.id===_lid) : null;
-    const _stageMap2 = {'관리고객':'관리','초기접촉':'접촉','미팅':'상담','협의':'제안','상담중':'접촉','제안완료':'제안'};
+    const _stageMap2 = STAGE_NORMALIZE;
     const _curN = _stageMap2[_lead?.current_stage] || _lead?.current_stage;
     const _isContractCancel = _curN === '계약';
     if(_isContractCancel){
@@ -11337,7 +11340,7 @@ async function saveActivity(){
   if(curUser?.role === 'team' && stage){
     const _stageOrder = {'배정':1, '접촉':2, '상담':3, '제안':4, '계약':5, '관리':6};
     const _lead = (allLeads||[]).find(l => l.id === lid);
-    const _stageMap = {'관리고객':'관리','초기접촉':'접촉','미팅':'상담','협의':'제안','상담중':'접촉','제안완료':'제안'};
+    const _stageMap = STAGE_NORMALIZE;
     const _curStage = _stageMap[_lead?.current_stage] || _lead?.current_stage;
     const _newStage = _stageMap[stage] || stage;
 
@@ -12629,7 +12632,7 @@ async function exportStatExcel(){
     const STG=['배정','접촉','상담','제안','계약','관리','보류','드랍'];
     const raw = String(l.current_stage||'').trim();
     if(!raw) return '미설정';
-    const _stageMap = {'관리고객':'관리','초기접촉':'접촉','미팅':'상담','협의':'제안','상담중':'접촉','제안완료':'제안'};
+    const _stageMap = STAGE_NORMALIZE;
     const mapped = _stageMap[raw] || raw;
     if(STG.includes(mapped)) return mapped;
     return '기타: '+mapped;
@@ -13175,7 +13178,7 @@ function sdashNormStage(l){
   const raw = String(l.current_stage||'').trim();
   if(!raw) return '미설정'; // current_stage 없음 = 단계 미설정 (DB관리도 '—'로 표시)
   // DB관리 stageBadge의 _stageMap과 동일
-  const _stageMap = {'관리고객':'관리','초기접촉':'접촉','미팅':'상담','협의':'제안','상담중':'접촉','제안완료':'제안'};
+  const _stageMap = STAGE_NORMALIZE;
   const mapped = _stageMap[raw] || raw;
   if(SDASH_STAGES.includes(mapped)) return mapped;
   // 8단계 표준에 없는 알 수 없는 값은 '기타'로 분류 (배정으로 묻지 않음)
@@ -14099,7 +14102,7 @@ function sdashDiagnose(){
 
   // 카테고리 1: 단계 분류 검증 (DB관리 stageBadge와 동일 결과인가)
   const STG = SDASH_STAGES;
-  const _stageMap = {'관리고객':'관리','초기접촉':'접촉','미팅':'상담','협의':'제안','상담중':'접촉','제안완료':'제안'};
+  const _stageMap = STAGE_NORMALIZE;
 
   let okCount = 0;       // 8단계로 정상 분류된 건
   let unsetCount = 0;    // current_stage 비어있음 (DB관리에서도 — 표시)
@@ -14359,7 +14362,7 @@ function _djInPeriod(l, type){
 function djNormStage(l){
   const raw = String(l.current_stage||'').trim();
   if(!raw) return '미배정'; // 대전 대시보드에서는 미설정을 '미배정'으로 표기
-  const _stageMap = {'관리고객':'관리','초기접촉':'접촉','미팅':'상담','협의':'제안','상담중':'접촉','제안완료':'제안'};
+  const _stageMap = STAGE_NORMALIZE;
   const mapped = _stageMap[raw] || raw;
   if(DJ_STAGES.includes(mapped)) return mapped;
   return '미배정';
