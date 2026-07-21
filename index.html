@@ -5340,6 +5340,7 @@ async function _fetchAllActivities(){
   const SELECT_COLS = 'id,lead_id,type,content,stage,author,date,created_at';
   const _t0 = Date.now();
   let base = 0, done = false, hardFail = 0;
+  const _ep = _dataEpoch;   // ★ 적재 시작 시점의 신분
   _actsLoadingShow(0);
 
   // 한 페이지를 가져온다. 성공: 배열 / 최종실패: false
@@ -5396,9 +5397,16 @@ async function _fetchAllActivities(){
 
   _actsLoadingHide(hardFail === 0);
 
+  // ★ 적재 도중 신분이 바뀌었으면(원격제어 진입 등) 결과를 반영하지 않는다
+  if(_ep !== _dataEpoch){
+    console.log('[활동기록] 신분 전환으로 전체 적재 결과 폐기');
+    return allActivities || [];
+  }
+
   if(hardFail === 0){
     _actsMode = 'full';           // ★ 전체 적재 완료
     _actsFullyLoaded = new Set(); // 전체가 있으므로 개별 표시 불필요
+    _actsLoadedAt = Date.now();
   }
 
   if(hardFail){
@@ -5974,8 +5982,11 @@ function goHome(){
 let _impersonator = null;
 
 // 신분 전환 시 이전 사용자의 데이터가 남지 않도록 전부 비운다
+let _dataEpoch = 0;   // ★ 신분이 바뀔 때마다 증가 — 진행 중이던 적재를 무효화하는 표식
+
 function _resetDataCaches(){
   try{
+    _dataEpoch++;   // ★ 이전 신분에서 예약·진행 중이던 적재는 이제 무효
     allLeads=[]; _allLeadsRaw=[]; filtered=[]; if(selIds&&selIds.clear) selIds.clear();
     allActivities=[]; allNextActions=[];
     _leadsLoadedAt=0; _actsLoadedAt=0; _nasLoadedAt=0;
@@ -6018,15 +6029,18 @@ function _renderImpersonationBanner(){
     el = document.createElement('div');
     el.id = 'imp-banner';
     el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99997;'
-      +'background:#b45309;color:#fff;font-size:13px;font-weight:700;'
-      +'padding:7px 14px;display:flex;align-items:center;justify-content:center;gap:14px;'
+      +'background:#dc2626;color:#fff;font-size:13px;font-weight:700;'
+      +'padding:7px 14px;display:flex;align-items:center;justify-content:center;gap:12px;'
       +'font-family:system-ui,-apple-system,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.25)';
     document.body.appendChild(el);
   }
   const roleLabel = (typeof RL!=='undefined' && RL[curUser.role]) || curUser.role;
   el.innerHTML = '👁 관리자 <b style="margin:0 2px">'+_impersonator.name+'</b> 님이 '
     +'<b style="margin:0 2px">'+curUser.name+'</b> ('+roleLabel+') 화면을 원격제어 중입니다'
-    +'<button onclick="exitImpersonation()" style="margin-left:6px;background:#fff;color:#b45309;'
+    +'<button onclick="openImpersonatePicker()" style="background:rgba(255,255,255,.2);color:#fff;'
+    +'border:1px solid rgba(255,255,255,.6);border-radius:14px;padding:4px 12px;font-size:12px;'
+    +'font-weight:700;cursor:pointer">⇄ 다른 계정</button>'
+    +'<button onclick="exitImpersonation()" style="background:#fff;color:#dc2626;'
     +'border:none;border-radius:14px;padding:4px 14px;font-size:12px;font-weight:800;cursor:pointer">↩ 원래대로</button>';
 }
 
@@ -7490,13 +7504,14 @@ async function loadAdmin(){
       // ★ 차트용 전체 적재는 세션당 한 번만 (반복 호출 방지)
       if(!window._chartsFullRequested){
       window._chartsFullRequested = true;
+      const _ep = _dataEpoch;   // ★ 예약 시점의 신분을 기억
       setTimeout(()=>{
+        if(_ep !== _dataEpoch || _impersonator) return;   // ★ 신분이 바뀌었으면 취소
         _loadAllActivities(true).then(a=>{
+          if(_ep !== _dataEpoch || _impersonator) return;  // ★ 받는 도중 바뀌었으면 버림
           if(!Array.isArray(a) || !a.length) return;
           allActivities = a;
           console.log('[활동기록] 차트용 전체 적재 완료 —', a.length, '건');
-          // 차트 함수는 인자를 받으므로 개별 호출하지 않고 화면을 다시 그린다
-          // (이때 _actsMode가 'full'이라 다시 받지 않는다)
           try{ if(document.getElementById('scr-admin')?.style.display !== 'none') loadAdmin(); }catch(_){}
         }).catch(()=>{});
       }, 600);
