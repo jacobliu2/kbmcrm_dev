@@ -5191,30 +5191,42 @@ async function _loadActSummary(force){
 
 async function _fetchActSummary(){
   const t0 = Date.now();
+  const RETRY = 2;
   _actsLoadingShow(0);
-  try{
-    const r = await fetch(SB_URL+'/rest/v1/rpc/lead_act_summary', {
-      method:'POST',
-      headers:{ ...sbH(), 'Content-Type':'application/json' },
-      body:'{}'
-    });
-    if(!r.ok) throw new Error('summary http '+r.status);
-    const rows = await r.json();
-    if(!Array.isArray(rows)) throw new Error('summary shape');
+  for(let attempt=0; attempt<=RETRY; attempt++){
+    try{
+      const r = await fetch(SB_URL+'/rest/v1/rpc/lead_act_summary', {
+        method:'POST',
+        headers:{ ...sbH(), 'Content-Type':'application/json' },
+        body:'{}'
+      });
+      if(!r.ok) throw new Error('summary http '+r.status);
+      const rows = await r.json();
+      if(!Array.isArray(rows)) throw new Error('summary shape');
 
-    _actCountMap = new Map();
-    rows.forEach(a=>{ if(a.act_count) _actCountMap.set(a.lead_id, Number(a.act_count)); });
-    _actsMode = 'summary';
-    _actsLoadedAt = Date.now();   // ★ 이 줄이 없어서 저장 때마다 전체를 다시 받았다
-    _actsFullyLoaded = new Set();
-    console.log('[활동기록] 요약 적재:', rows.length, '줄 /', (Date.now()-t0), 'ms');
-    _actsLoadingHide(true);
-    return rows;
-  }catch(e){
-    console.warn('[활동기록] 요약 실패 — 전체 적재로 대체:', e.message);
-    _actsLoadingHide(true);
-    return await _loadAllActivities(true);   // 요약이 안 되면 기존 방식으로
+      _actCountMap = new Map();
+      rows.forEach(a=>{ if(a.act_count) _actCountMap.set(a.lead_id, Number(a.act_count)); });
+      _actsMode = 'summary';
+      _actsLoadedAt = Date.now();
+      _actsFullyLoaded = new Set();
+      console.log('[활동기록] 요약 적재:', rows.length, '줄 /', (Date.now()-t0), 'ms');
+      _actsLoadingHide(true);
+      return rows;
+    }catch(e){
+      console.warn('[활동기록] 요약 시도 '+(attempt+1)+' 실패:', e.message);
+      if(attempt < RETRY) await new Promise(s=>setTimeout(s, 500*(attempt+1)));
+    }
   }
+  // ★ 최종 실패해도 전체 138,000건을 받지 않는다 (브라우저 마비 방지).
+  //    요약 없이 진행하고, 활동 상세는 리드를 클릭할 때 그것만 개별 로드한다.
+  console.error('[활동기록] 요약 최종 실패 — 요약 없이 진행 (상세는 개별 로드)');
+  _actsMode = 'summary';
+  _actCountMap = new Map();
+  _actsLoadedAt = Date.now();
+  _actsFullyLoaded = new Set();
+  _actsLoadingHide(false);
+  if(typeof showToast==='function') showToast('활동 요약을 불러오지 못했습니다. 목록은 정상 사용 가능합니다.','error');
+  return [];
 }
 
 // ★ 활동기록 로딩 표시 (화면 중앙 · 클릭은 통과)
