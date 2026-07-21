@@ -2047,7 +2047,7 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS auto_recall_reason text;</div>
       </div>
       <div class="fg"><label>소속 지점 <span style="color:var(--gray-400);font-size:11px">(팀장·지점장만 선택)</span></label>
         <select id="uf-branch" style="padding:9px 12px;background:var(--gray-50);border:1.5px solid var(--gray-200);border-radius:var(--r-sm);font-size:13px;font-family:inherit;color:var(--gray-900);width:100%">
-          <option value="">선택 안 함</option><option>신상국</option><option>정명구</option><option>정혜윤</option><option>최종길</option>
+          <option value="">선택 안 함</option>
         </select>
       </div>
       <div class="fg"><label>초기 비밀번호 <span style="color:var(--gray-400);font-size:11px">(기본: 1234)</span></label><input type="text" id="uf-pw" value="1234" placeholder="초기 비밀번호 입력"></div>
@@ -2085,7 +2085,7 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS auto_recall_reason text;</div>
       <div><div style="font-size:12px;font-weight:700;color:var(--gray-500);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">필터</div>
         <div style="display:flex;gap:10px">
           <select id="exp-branch" style="flex:1;padding:9px 11px;background:var(--gray-50);border:1.5px solid var(--gray-200);border-radius:var(--r-sm);font-size:13px;font-family:inherit;color:var(--gray-900)">
-            <option value="">전체 지점</option><option>신상국</option><option>정명구</option><option>정혜윤</option><option>최종길</option>
+            <option value="">전체 지점</option>
           </select>
           <select id="exp-status" style="flex:1;padding:9px 11px;background:var(--gray-50);border:1.5px solid var(--gray-200);border-radius:var(--r-sm);font-size:13px;font-family:inherit;color:var(--gray-900)">
             <option value="">전체 단계</option>
@@ -2745,12 +2745,7 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS auto_recall_reason text;</div>
       </div>
       <div class="fg full">
         <label>지점 선택 <span style="font-weight:400;color:var(--gray-400)">(전체는 선택 없이)</span></label>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
-          <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;padding:5px 12px;border:1.5px solid var(--gray-200);border-radius:20px"><input type="checkbox" name="cc-branch" value="신상국" style="accent-color:var(--navy)"> 신상국</label>
-          <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;padding:5px 12px;border:1.5px solid var(--gray-200);border-radius:20px"><input type="checkbox" name="cc-branch" value="정명구" style="accent-color:var(--navy)"> 정명구</label>
-          <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;padding:5px 12px;border:1.5px solid var(--gray-200);border-radius:20px"><input type="checkbox" name="cc-branch" value="정혜윤" style="accent-color:var(--navy)"> 정혜윤</label>
-          <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;padding:5px 12px;border:1.5px solid var(--gray-200);border-radius:20px"><input type="checkbox" name="cc-branch" value="최종길" style="accent-color:var(--navy)"> 최종길</label>
-        </div>
+        <div id="cc-branch-list" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px"></div>
       </div>
       <!-- 알람 설정 -->
       <div class="fg full">
@@ -3516,18 +3511,14 @@ function renderLeadCards(){
   let data = (myLeads||[]).filter(l=>{
     if(q && !(l.company_name||'').toLowerCase().includes(q)) return false;
     if(st && l.status !== st) return false;
-    if(_myLeadsFilter === 'unrecorded'){
-      const isUnrec = false && !recorded.has(l.id);
-      return isUnrec;
-    }
     if(_myLeadsFilter === 'contacted') return l.status === 'contacted';
     return true;
   });
 
   if(!data.length){
     grid.innerHTML = `<div style="text-align:center;padding:40px 20px;color:var(--gray-400)">
-      <div style="font-size:40px;margin-bottom:12px">${_myLeadsFilter==='unrecorded'?'<svg class="li" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.5 2.5L16 9"/></svg>':'<svg class="li" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>'}</div>
-      <div style="font-size:14px;font-weight:600">${_myLeadsFilter==='unrecorded'?'미기록 고객 없음':'데이터 없음'}</div>
+      <div style="font-size:40px;margin-bottom:12px"><svg class="li" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></div>
+      <div style="font-size:14px;font-weight:600">데이터 없음</div>
     </div>`;
     return;
   }
@@ -3536,9 +3527,6 @@ function renderLeadCards(){
   const SC2 = {assigned:'var(--blue)',contacted:'var(--ok)',no_answer:'var(--warn)',drop:'var(--err)',consulting:'var(--blue)'};
 
   grid.innerHTML = data.map(l=>{
-    const isUnrec = false && !recorded.has(l.id);
-    const assignedAt = new Date(l.assigned_at||l.created_at||0).getTime();
-    const isOverdue = isUnrec && bizElapsedMs(assignedAt,now) >= H30;
     const leadActs = acts.filter(a=>a.lead_id===l.id && a.type!=='assign')
       .sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
     const lastAct = leadActs[0];
@@ -3546,10 +3534,9 @@ function renderLeadCards(){
     const grade = calcLeadGrade(l, acts);
     const sc = SC2[l.status]||'var(--gray-400)';
     const sl = SL2[l.status]||l.status;
-    const hoursAgo = isUnrec ? Math.floor((now-assignedAt)/3600000) : 0;
 
-    return `<div class="lead-card ${isOverdue?'overdue':isUnrec?'unrecorded':''}"
-      onclick="cardClick('${l.id}','${escJs(l.company_name||'')}',${isUnrec})">
+    return `<div class="lead-card"
+      onclick="cardClick('${l.id}','${escJs(l.company_name||'')}',false)">
       <!-- 상단: 이름 + 상태 -->
       <div class="lead-card-top">
         <div>
@@ -3560,7 +3547,6 @@ function renderLeadCards(){
           <div style="display:flex;gap:5px;margin-top:5px;flex-wrap:wrap">
             <span style="font-size:10px;padding:2px 7px;border-radius:8px;background:${grade.bg};color:${grade.color};font-weight:700">${grade.label}</span>
             ${l.current_stage?`<span style="font-size:10px;padding:2px 7px;border-radius:8px;background:var(--gray-100);color:var(--gray-600);font-weight:600">${esc(l.current_stage)}</span>`:''}
-            ${isOverdue?`<span style="font-size:10px;padding:2px 7px;border-radius:8px;background:rgba(239,68,68,.15);color:var(--err);font-weight:700"><svg class="li" viewBox="0 0 24 24"><path d="M12 3 2 20h20z"/><path d="M12 9v5M12 17h.01"/></svg>${hoursAgo}h 미기록</span>`:''}
           </div>
         </div>
         <span style="font-size:11px;font-weight:700;color:${sc};background:${sc}18;padding:4px 10px;border-radius:10px;flex-shrink:0">${sl}</span>
@@ -4748,13 +4734,8 @@ async function changeStatus(leadId, status, stage, note, silent){
 }
 
 // ── 계정 ─────────────────────────────────────────────────
-let BRANCHES = ['신상국','정명구','정혜윤','최종길'];
-let TEAM_MAP = {
-  '신상국':['강정희','김관형','김두한','박상혁','백두진','배한두','서도겸','신인균','유인수','이동혁','이현준','최택호','이희용'],
-  '정명구':['김철희','문범모','문성희','박성훈','안대승','조재완','최회수'],
-  '정혜윤':['강정환','김봉필','김연한','김용희','김종빈','박문수','서갑기','양은모','양환기','유동관','임석중','정우성','차만희','추정한','형주영'],
-  '최종길':['박상욱','박승규','이성원','유영준','전용준'],
-};
+let BRANCHES = []; // 초기값 비움 — startApp의 syncBranchTeamMap()가 계정에서 채움
+let TEAM_MAP = {}; // 초기값 비움 — syncBranchTeamMap()가 계정에서 채움
 
 // 사용자 목록 기반으로 BRANCHES/TEAM_MAP 동적 갱신
 function syncBranchTeamMap(){
@@ -4774,6 +4755,16 @@ function _renderBranchCheckboxes(containerId, name){
   if(!el) return;
   const bs = (typeof BRANCHES!=='undefined' && Array.isArray(BRANCHES)) ? BRANCHES : [];
   el.innerHTML = bs.map(function(b){ return '<label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;padding:5px 12px;border:1.5px solid var(--gray-200);border-radius:20px">'+'<input type="checkbox" name="'+name+'" value="'+b+'" style="accent-color:var(--navy)"> '+b+'</label>'; }).join('');
+}
+
+// 지점 드롭다운을 BRANCHES로 동적 채움 — 하드코딩 이름 제거
+function _renderBranchOptions(selectId, firstHtml){
+  const el = document.getElementById(selectId);
+  if(!el) return;
+  const cur = el.value;
+  const bs = (typeof BRANCHES!=='undefined' && Array.isArray(BRANCHES)) ? BRANCHES : [];
+  el.innerHTML = firstHtml + bs.map(function(b){ return '<option>'+b+'</option>'; }).join('');
+  if(cur) el.value = cur;
 }
 
 const ACCT_VER_KEY='kbmc_v2_acct_ver';
@@ -7499,7 +7490,7 @@ function renderTeamMeeting(){
   };
 
   // 지점별 → 팀별 집계
-  // TEAM_MAP: {'신상국':[...], '정명구':[...], ...}
+  // TEAM_MAP: {'지점장명':[...소속팀장...], ...}
   const branchData={};
   for(const branch of Object.keys(TEAM_MAP)){
     branchData[branch]={done:0, scheduled:0, teams:{}};
@@ -11267,6 +11258,7 @@ async function confirmImport(){
 
 // ── 내보내기 ──────────────────────────────────────────────
 function openExport(){
+  _renderBranchOptions('exp-branch','<option value="">전체 지점</option>');
   const now=new Date();
   (document.getElementById('exp-from')||{}).value=new Date(now.getFullYear(),now.getMonth(),1).toISOString().slice(0,10);
   (document.getElementById('exp-to')||{}).value=now.toISOString().slice(0,10);
@@ -14364,9 +14356,9 @@ async function openTmRevertModal(){
 
 // 활동로그 기반 — 이관 직전 본사 배정의 지점·팀장 정확히 추출
 // 활동로그 패턴 예:
-//   "신상국 → 박상욱 배정"
-//   "정혜윤 → 김영희 배정 [협업: 이순신]"
-//   "일괄 자동 배정 → 정혜윤"  ← 지점만 추출 가능
+//   "지점장명 → 팀장명 배정"
+//   "지점장명 → 팀장명 배정 [협업: 협업자명]"
+//   "일괄 자동 배정 → 지점장명"  ← 지점만 추출 가능
 //   "팀장 회수 후 대전TM 이관"  ← 스킵 (대전 이관 로그)
 //   "유영준 초도상담 이관"      ← 스킵 (대전 이관성)
 //
@@ -14662,7 +14654,7 @@ function _rvBuildBranchOptions(){
   if(_rvBranchOptionsBuilt) return;
   const sel = document.getElementById('rv-branch');
   if(!sel) return;
-  const branches = (typeof BRANCHES!=='undefined' && Array.isArray(BRANCHES)) ? BRANCHES : ['신상국','정명구','정혜윤','최종길'];
+  const branches = (typeof BRANCHES!=='undefined' && Array.isArray(BRANCHES)) ? BRANCHES : [];
   let html = '<option value="">전체 지점</option>';
   branches.forEach(b=>{
     html += `<option value="${esc(b)}">${esc(b)}</option>`;
@@ -16202,7 +16194,7 @@ function annOnTargetTypeChange(){
 function annBuildBranchCheckboxes(){
   const el = document.getElementById('ann-branch-checkboxes');
   if(!el) return;
-  const branches = (typeof BRANCHES!=='undefined' && Array.isArray(BRANCHES)) ? BRANCHES : ['신상국','정명구','정혜윤','최종길'];
+  const branches = (typeof BRANCHES!=='undefined' && Array.isArray(BRANCHES)) ? BRANCHES : [];
   // 대전TM도 지점 형태로
   const all = [...branches,'대전'];
   el.innerHTML = all.map(b=>{
@@ -16415,7 +16407,7 @@ function renderUserList(){
     <td style="padding:7px 10px">${a.pw?.length===64?'<span style="font-size:11px;color:var(--ok)">변경됨</span>':'<span style="font-size:11px;color:var(--warn)">초기값</span>'}</td>
     <td style="padding:7px 10px"><div style="display:flex;gap:4px"><button class="btn btn-outline btn-xs" onclick="openEditUser('${a.id}')">수정</button><button class="btn btn-danger btn-xs" onclick="deleteUser('${a.id}')">삭제</button></div></td></tr>`).join('')+'</tbody></table></div>';
 }
-function openAddUser(){(document.getElementById('user-form-title')||{}).textContent='사용자 추가';(document.getElementById('uf-edit-id')||{}).value='';['uf-id','uf-name','uf-branch'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});(document.getElementById('uf-role')||{}).value='team';(document.getElementById('uf-pw')||{}).value='1234';if(document.getElementById('uf-id'))document.getElementById('uf-id').readOnly=false;openM('modal-user');}
+function openAddUser(){_renderBranchOptions('uf-branch','<option value="">선택 안 함</option>');(document.getElementById('user-form-title')||{}).textContent='사용자 추가';(document.getElementById('uf-edit-id')||{}).value='';['uf-id','uf-name','uf-branch'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});(document.getElementById('uf-role')||{}).value='team';(document.getElementById('uf-pw')||{}).value='1234';if(document.getElementById('uf-id'))document.getElementById('uf-id').readOnly=false;openM('modal-user');}
 function openEditUser(uid){
   const a=getAccs().find(x=>x.id===uid); if(!a) return;
   (document.getElementById('user-form-title')||{}).textContent='사용자 수정';
@@ -16426,6 +16418,7 @@ function openEditUser(uid){
   if(idEl) idEl.readOnly=false;
   (document.getElementById('uf-name')||{}).value=a.name;
   (document.getElementById('uf-role')||{}).value=a.role;
+  _renderBranchOptions('uf-branch','<option value="">선택 안 함</option>');
   (document.getElementById('uf-branch')||{}).value=a.branch||'';
   (document.getElementById('uf-pw')||{}).value='';
   openM('modal-user');
@@ -21940,7 +21933,7 @@ function _rpBuildBranchOptions(){
     _rpBranchOptionsBuilt = true;
     return;
   }
-  const branches = (typeof BRANCHES!=='undefined' && Array.isArray(BRANCHES)) ? BRANCHES : ['신상국','정명구','정혜윤','최종길'];
+  const branches = (typeof BRANCHES!=='undefined' && Array.isArray(BRANCHES)) ? BRANCHES : [];
   let html = '<option value="">전체 지점</option>';
   branches.forEach(b=>{ html += `<option value="${esc(b)}">${esc(b)}</option>`; });
   html += '<option value="__empty__">(지점 없음)</option>';
@@ -24244,6 +24237,7 @@ function openCompCalModal(dateStr){
   (document.getElementById('cc-content')||{}).value='';
   (document.getElementById('cc-start')||{}).value=dateStr||todayKst();
   (document.getElementById('cc-end')||{}).value='';
+  _renderBranchCheckboxes('cc-branch-list','cc-branch');
   document.querySelectorAll('input[name="cc-role"]').forEach(r=>r.checked=(r.value==='all'));
   document.querySelectorAll('input[name="cc-branch"]').forEach(c=>c.checked=false);
   document.querySelectorAll('input[name="cc-alarm"]').forEach(c=>c.checked=false);
@@ -24328,6 +24322,7 @@ function renderCompCalUpcoming(cals){
 
 function openEditCompCal(id){
   const c=getCompCals().find(x=>x.id===id);if(!c)return;
+  _renderBranchCheckboxes('cc-branch-list','cc-branch');
   (document.getElementById('comp-cal-edit-id')||{}).value=id;
   (document.getElementById('comp-cal-modal-title')||{}).innerHTML='<svg class="li" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg> 회사 일정 수정';
   (document.getElementById('cc-title')||{}).value=c.title||'';
@@ -24660,19 +24655,19 @@ function downloadExcelTemplate(){
       '3억_미만/3억~5억_미만/5억~10억_미만\n10억~20억_미만/20억~30억_미만\n30억~50억_미만/50억~100억_미만/100억_이상',
       '제조업/IT/유통 등','수도권(서울,경기,인천)/충청권 등',
       '필수 *','','',
-      '','','신상국/정명구/정혜윤/최종길','팀장 이름'
+      '','',(BRANCHES.join('/')||'지점장명'),'팀장 이름'
     ];
 
     // 예시 데이터 2건
     const sample1=[
       '2026-03-21','2026-03-20 14:30','기업자금증액(전국)','인스타그램','없음',
       '10억~20억_미만','제조업','수도권(서울,경기,인천)','(주)샘플기업','홍길동','010-1234-5678',
-      '<template class="__cf_email__" data-cfemail="e88087868fa89b898598848dc68b87c6839a">[email&#160;protected]</template>','특이사항 없음','신상국','이현준'
+      '<template class="__cf_email__" data-cfemail="e88087868fa89b898598848dc68b87c6839a">[email&#160;protected]</template>','특이사항 없음',(BRANCHES[0]||''),((TEAM_MAP[BRANCHES[0]]||[])[0]||'')
     ];
     const sample2=[
       '2026-03-21','2026-03-21 09:00','바우처(수도권+부산경남)','페이스북','없음',
       '5억~10억_미만','IT/소프트웨어','수도권(서울,경기,인천)','주식회사 테스트','김영희','010-9876-5432',
-      '','','정혜윤',''
+      '','',(BRANCHES[0]||''),''
     ];
 
     const wsData=[headers, desc, sample1, sample2];
@@ -24719,10 +24714,7 @@ function downloadExcelTemplate(){
       ['유입경로','blog','블로그'],
       ['유입경로','지인소개',''],
       ['','',''],
-      ['지점장','신상국',''],
-      ['지점장','정명구',''],
-      ['지점장','정혜윤',''],
-      ['지점장','최종길',''],
+      ...(BRANCHES||[]).map(function(b){ return ['지점장',b,'']; }),
     ];
     const ws2=XLSX.utils.aoa_to_sheet(codeData);
     ws2['!cols']=[{wch:12},{wch:28},{wch:20}];
