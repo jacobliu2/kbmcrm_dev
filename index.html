@@ -2703,20 +2703,7 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS auto_recall_reason text;</div>
       <!-- 수신 대상: 지점 선택 -->
       <div class="fg full">
         <label>지점 선택 <span style="font-weight:400;color:var(--gray-400)">(선택 안 하면 전체 지점)</span></label>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
-          <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;padding:5px 12px;border:1.5px solid var(--gray-200);border-radius:20px">
-            <input type="checkbox" name="notice-branch" value="신상국" style="accent-color:var(--navy)"> 신상국
-          </label>
-          <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;padding:5px 12px;border:1.5px solid var(--gray-200);border-radius:20px">
-            <input type="checkbox" name="notice-branch" value="정명구" style="accent-color:var(--navy)"> 정명구
-          </label>
-          <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;padding:5px 12px;border:1.5px solid var(--gray-200);border-radius:20px">
-            <input type="checkbox" name="notice-branch" value="정혜윤" style="accent-color:var(--navy)"> 정혜윤
-          </label>
-          <label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;padding:5px 12px;border:1.5px solid var(--gray-200);border-radius:20px">
-            <input type="checkbox" name="notice-branch" value="최종길" style="accent-color:var(--navy)"> 최종길
-          </label>
-        </div>
+        <div id="notice-branch-list" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px"></div>
       </div>
       <div class="fg full"><label>제목 *</label><input type="text" id="notice-title-input" placeholder="공지 제목"></div>
       <div class="fg full"><label>내용 *</label><textarea id="notice-content-input" rows="4" placeholder="공지 내용을 입력하세요"></textarea></div>
@@ -4779,6 +4766,14 @@ function syncBranchTeamMap(){
     if(!TEAM_MAP[a.branch]) TEAM_MAP[a.branch]=[];
     TEAM_MAP[a.branch].push(a.name);
   });
+}
+
+// 지점 체크박스를 BRANCHES(계정에서 동기화된 실제 지점)로 동적 생성 — 하드코딩 이름 제거
+function _renderBranchCheckboxes(containerId, name){
+  const el = document.getElementById(containerId);
+  if(!el) return;
+  const bs = (typeof BRANCHES!=='undefined' && Array.isArray(BRANCHES)) ? BRANCHES : [];
+  el.innerHTML = bs.map(function(b){ return '<label style="display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;padding:5px 12px;border:1.5px solid var(--gray-200);border-radius:20px">'+'<input type="checkbox" name="'+name+'" value="'+b+'" style="accent-color:var(--navy)"> '+b+'</label>'; }).join('');
 }
 
 const ACCT_VER_KEY='kbmc_v2_acct_ver';
@@ -24121,6 +24116,7 @@ function openNoticeModal(editId){
   (document.getElementById('notice-content-input')||{}).value='';
   (document.getElementById('notice-start-date')||{}).value=todayKst();
   (document.getElementById('notice-end-date')||{}).value='';
+  _renderBranchCheckboxes('notice-branch-list','notice-branch');
   // 초기화
   document.querySelectorAll('input[name="notice-role"]').forEach(r=>{r.checked=(r.value==='all');});
   document.querySelectorAll('input[name="notice-branch"]').forEach(c=>c.checked=false);
