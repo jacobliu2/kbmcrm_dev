@@ -6752,7 +6752,7 @@ async function submitRoomBooking(){
       var _dstr=toBook[0]+(toBook.length>1?(" 외 "+(toBook.length-1)+"회"):"");
       var _subj="회의실 예약 안내: "+room;
       var _body=curUser.name+"님이 회의에 초대했습니다.\n회의실: "+room+"\n일시: "+_dstr+" "+_minToHHMM(startMin)+"-"+_minToHHMM(endMin)+(title?("\n용도: "+title):"");
-      for(var _ai=0;_ai<_rbAttSel.length;_ai++){ if(_rbAttSel[_ai].name!==curUser.name) await _roomNotify(_rbAttSel[_ai], _subj, _body); }
+      var _attCopy=_rbAttSel.slice(); setTimeout(function(){ _attCopy.forEach(function(a){ if(a && a.name!==curUser.name){ try{ _roomNotify(a,_subj,_body); }catch(e){} } }); }, 0);
     }
     const el=_roomDateEl(); if(el){ el.value=toBook[0]; }   // 방금 예약한 날짜로 화면 이동 (흐름 매끄럽게)
     loadRoomScreen();
