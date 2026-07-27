@@ -5525,7 +5525,7 @@ function closeM(id){document.getElementById(id)?.classList.remove('open');}
 
 // ═══════════════ 회의실 예약 ═══════════════
 const ROOMS = ['소회의실1','소회의실2','대회의실','강의장'];
-const ROOM_OPEN_MIN = 8*60;    // 08:00
+const ROOM_OPEN_MIN = 6*60;    // 06:00 (아침 일찍 오시는 분 배려)
 const ROOM_CLOSE_MIN = 22*60;  // 22:00
 const ROOM_SLOT = 30;          // 30분 단위
 let _roomCache = [];           // 선택 날짜의 active 예약
