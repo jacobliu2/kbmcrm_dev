@@ -1293,7 +1293,8 @@ body.dark-mode *::-webkit-scrollbar-thumb:hover{background:rgba(180,208,232,.30)
               <button onclick="compCalNav(-1)" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--navy)">‹</button>
               <span id="comp-cal-label" style="font-size:13px;font-weight:700;color:var(--navy);min-width:80px;text-align:center"></span>
               <button onclick="compCalNav(1)" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--navy)">›</button>
-              <button class="btn btn-outline btn-xs" onclick="openCompCalModal(null)">+ 일정</button>
+              <button class="btn btn-outline btn-xs" onclick="openCompCalModal(null)">+ 일정 등록</button>
+              <button class="btn btn-outline btn-xs" onclick="openRoomBooking()">🏢 회의실 예약</button>
             </div>
           </div>
           <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:1px;margin-bottom:3px">
@@ -6653,6 +6654,7 @@ function openRoomBooking(room){
   eEl.innerHTML = opts.slice(1).join('');      // 개장시각은 종료에서 제외
   sEl.value = String(9*60);   // 기본 09:00
   eEl.value = String(10*60);  // 기본 10:00
+  sEl.onchange=_rbRefreshExisting; eEl.onchange=_rbRefreshExisting;
   document.getElementById('rb-warn').textContent='';
   _rbRefreshExisting();
   openM('modal-room-book');
@@ -6672,7 +6674,11 @@ async function _rbRefreshExisting(){
   try{ list = await sbGet('room_reservations?room=eq.'+encodeURIComponent(room)+'&res_date=eq.'+date+'&status=eq.active&order=start_min.asc') || []; }
   catch(e){ box.innerHTML=''; return; }
   if(!list.length){ box.innerHTML='<span style="color:var(--ok)">이 날 이 방은 비어 있습니다.</span>'; return; }
-  box.innerHTML='이미 예약됨 — '+list.map(function(r){return _minToHHMM(r.start_min)+'–'+_minToHHMM(r.end_min);}).join(', ');
+  var _s=parseInt((document.getElementById('rb-start')||{}).value,10), _e=parseInt((document.getElementById('rb-end')||{}).value,10);
+  var _clash=list.find(function(r){ return _s<r.end_min && _e>r.start_min; });
+  var _lt=list.map(function(r){return _minToHHMM(r.start_min)+'~'+_minToHHMM(r.end_min);}).join(', ');
+  if(_clash){ box.innerHTML='<div style="background:#fee2e2;border:1.5px solid #dc2626;color:#b91c1c;border-radius:8px;padding:9px 11px;font-weight:800;font-size:13px">⚠ 선택한 시간('+_minToHHMM(_s)+'~'+_minToHHMM(_e)+')은 이미 예약되어 있습니다<br><span style="font-weight:600;font-size:11px">기존 예약: '+_lt+'</span></div>'; }
+  else { box.innerHTML='<span style="color:var(--gray-500);font-size:12px">이미 예약된 시간 — '+_lt+'</span>'; }
 }
 // ── 참석자 선택 + 쪽지 알림 ──
 let _rbAttSel = [];  // [{id,name,role}]
@@ -6729,7 +6735,7 @@ async function submitRoomBooking(){
   let count=1;
   if(recur!=='none'){ count=Math.max(2, Math.min(30, parseInt(document.getElementById('rb-count').value,10)||1)); }
   const dates=[]; const base=new Date(date+'T00:00:00');
-  for(let i=0;i<count;i++){ const d=new Date(base); if(recur==='weekly') d.setDate(d.getDate()+7*i); else if(recur==='daily') d.setDate(d.getDate()+i); dates.push(d.toISOString().slice(0,10)); }
+  for(let i=0;i<count;i++){ const d=new Date(base); if(recur==='weekly') d.setDate(d.getDate()+7*i); else if(recur==='daily') d.setDate(d.getDate()+i); dates.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')); }
   // ★ 충돌 검사 — 캐시가 아니라 서버에 지금 직접 묻는다 (이중 부킹 방지의 급소). 반복이면 모든 회차를 한 번에 조회.
   let existing=[];
   try{ existing = await sbGet('room_reservations?room=eq.'+encodeURIComponent(room)+'&res_date=in.('+dates.join(',')+')&status=eq.active') || []; }
@@ -6740,7 +6746,7 @@ async function submitRoomBooking(){
     const clash = existing.find(function(r){ return r.res_date===d && startMin<r.end_min && endMin>r.start_min; });
     if(clash) skipped.push(d); else toBook.push(d);
   });
-  if(!toBook.length){ warn.textContent='선택한 날짜가 모두 이미 예약되어 있습니다.'; return; }
+  if(!toBook.length){ warn.innerHTML='<span style="font-weight:800">⚠ 이미 예약된 시간입니다. 다른 시간을 선택하세요.</span>'; try{showToast('이미 예약된 시간입니다','error');}catch(e){} return; }
   const rows = toBook.map(function(d){ return { room:room, res_date:d, start_min:startMin, end_min:endMin, title:title, reserved_by:curUser.name, attendees:JSON.stringify(_rbAttSel.map(function(a){return a.name;})), recur_group:recurGroup, status:'active' }; });
   const res = await sbPost('room_reservations', rows);
   if(res){
