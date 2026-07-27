@@ -2250,6 +2250,18 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS auto_recall_reason text;</div>
 </div>
 
 <!-- ═══ 쪽지함 (모든 역할) ═══ -->
+<div id="screen-rooms" class="screen">
+  <div style="max-width:900px;margin:0 auto;padding:8px">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 16px">
+      <div style="font-weight:800;font-size:18px;color:var(--navy)">회의실 예약</div>
+      <div style="flex:1"></div>
+      <button class="btn btn-outline btn-xs" onclick="roomDateShift(-1)">◀ 어제</button>
+      <input type="date" id="room-date" onchange="loadRoomScreen()" style="padding:8px 10px;border:1.5px solid var(--gray-200);border-radius:8px;font-size:14px">
+      <button class="btn btn-outline btn-xs" onclick="roomDateShift(1)">내일 ▶</button>
+    </div>
+    <div id="room-grid"></div>
+  </div>
+</div>
 <div id="screen-messages" class="screen">
   <div class="page-header">
     <div class="page-title"><svg class="li" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>쪽지함</div>
@@ -2677,6 +2689,21 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS auto_recall_reason text;</div>
 </div>
 
 <!-- ── 공지 작성 모달 ── -->
+<div class="modal-overlay" id="modal-room-book">
+  <div class="modal" style="width:440px;max-width:94vw">
+    <div class="mh"><div class="mt">회의실 예약</div></div>
+    <input type="hidden" id="rb-room">
+    <input type="hidden" id="rb-date">
+    <div class="form-grid">
+      <div class="fg full"><label>회의실</label><div id="rb-room-label" style="font-weight:800;color:var(--navy);font-size:15px"></div></div>
+      <div class="fg"><label>시작</label><select id="rb-start"></select></div>
+      <div class="fg"><label>종료</label><select id="rb-end"></select></div>
+      <div class="fg full"><label>용도 / 회의명</label><input type="text" id="rb-title" placeholder="예: 주간 영업회의"></div>
+      <div class="fg full"><div id="rb-warn" style="color:var(--err);font-size:13px;min-height:18px"></div></div>
+    </div>
+    <div class="mf"><button class="btn btn-outline" onclick="closeM('modal-room-book')">닫기</button><button class="btn" onclick="submitRoomBooking()">예약</button></div>
+  </div>
+</div>
 <div class="modal-overlay" id="modal-notice">
   <div class="modal" style="width:560px;max-height:90vh;overflow-y:auto">
     <div class="mh"><div class="mt" id="notice-modal-title"><svg class="li" viewBox="0 0 24 24"><path d="M3 11v3a1 1 0 0 0 1 1h2l4 4V6L6 10H4a1 1 0 0 0-1 1z"/><path d="M15 8a4 4 0 0 1 0 8M18 5a8 8 0 0 1 0 14"/></svg>공지 작성</div><button class="mc" onclick="closeM('modal-notice')"><svg class="li" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg></button></div>
@@ -3506,7 +3533,6 @@ function renderLeadCards(){
   const acts = allActivities||[];
   const recorded = new Set(acts.map(a=>a.lead_id));
   const now = Date.now();
-  const H30 = 30*3600*1000;
 
   let data = (myLeads||[]).filter(l=>{
     if(q && !(l.company_name||'').toLowerCase().includes(q)) return false;
@@ -3623,6 +3649,17 @@ let SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZ
 
 // ★ 단계 정규화 맵 — 유일한 진실(구단계명 → 신단계). 복붙 금지, 오직 이 한 곳만 수정한다.
 const STAGE_NORMALIZE = {'관리고객':'관리','초기접촉':'접촉','미팅':'상담','협의':'제안','상담중':'접촉','제안완료':'제안'};
+
+// ★ 회수 임계값 — 유일한 진실. 회수 규칙은 오직 여기서만 바꾼다.
+// 단위 주의: 배정은 영업"시간", 접촉·관리는 영업"일" (bizElapsedMs / bizElapsedDays)
+const RECALL = {
+  ASSIGN_BIZHOURS: 48,   // 배정 회수: 활동기록 없이 48 영업시간 경과
+  CONTACT_BIZDAYS:  5,   // 접촉·상담 회수: 마지막 활동 후 5 영업일
+  MANAGE_BIZDAYS:  30,   // 관리 회수: 마지막 활동 후 30 영업일
+};
+
+// 미기록 조기경고: 30 영업시간 (회수 전 대시보드 표시·집계용. 회수 판정 아님)
+const UNREC_WARN_BIZHOURS = 30;
 let testMode = (location.protocol === 'file:'); // file:// → localStorage, 배포 → Supabase
 
 // ── Supabase Realtime 클라이언트 ──────────────────────────
@@ -4913,6 +4950,8 @@ const NAV_CFG = {
   team:[{id:'leads',l:'<svg class="li" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>DB관리'},{id:'stage-dashboard',l:'<svg class="li" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg>단계별 현황'},{id:'my-clients',l:'<svg class="li" viewBox="0 0 24 24"><path d="M6 9a6 6 0 0 0 12 0V3H6z"/><path d="M6 5H3v2a3 3 0 0 0 3 3M18 5h3v2a3 3 0 0 1-3 3M9 21h6M12 17v4"/></svg>고객관리'},{id:'activity',l:'<svg class="li" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>캘린더'},{id:'notices',l:'<svg class="li" viewBox="0 0 24 24"><path d="M3 11v3a1 1 0 0 0 1 1h2l4 4V6L6 10H4a1 1 0 0 0-1 1z"/><path d="M15 8a4 4 0 0 1 0 8M18 5a8 8 0 0 1 0 14"/></svg>공지함'}],
   tm:[{id:'tm-panel',l:'<svg class="li" viewBox="0 0 24 24"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.6a2 2 0 0 1-.4 2.1L8 9.6a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.4c.8.3 1.7.5 2.6.6a2 2 0 0 1 1.7 2z"/></svg>관리 DB'},{id:'notices',l:'<svg class="li" viewBox="0 0 24 24"><path d="M3 11v3a1 1 0 0 0 1 1h2l4 4V6L6 10H4a1 1 0 0 0-1 1z"/><path d="M15 8a4 4 0 0 1 0 8M18 5a8 8 0 0 1 0 14"/></svg>공지함'}],
 };
+// 회의실 예약 — 전 역할 네비에 추가
+try{ Object.keys(NAV_CFG).forEach(function(r){ if(!NAV_CFG[r].some(function(n){return n.id==='rooms';})) NAV_CFG[r].push({id:'rooms', l:'<svg class="li" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M8 4v3M16 4v3"/></svg> 회의실'}); }); }catch(e){}
 const RL={admin:'관리자',dbmanager:'DB관리자',branch:'지점장',team:'팀장',tm:'대전TM'};
 
 // ── KBMC CRM 로고 클릭 → 역할별 메인화면으로 이동 ───────────────
@@ -5128,11 +5167,11 @@ function startApp(){
 function showScreen(id, btn){
   // 역할별 접근 가능 화면 화이트리스트
   const ALLOWED = {
-    admin:     ['admin','insights','leads','stage-dashboard','dj-status','users','activity','settings','messages'],
-    dbmanager: ['leads','activity','notices','messages'],
-    branch:    ['branch','leads','stage-dashboard','my-clients','activity','notices','messages'],
-    team:      ['leads','stage-dashboard','my-leads','my-clients','activity','notices','messages'],
-    tm:        ['tm-panel','notices','messages'],
+    admin:     ['admin','insights','leads','stage-dashboard','dj-status','users','activity','settings','messages','rooms'],
+    dbmanager: ['leads','activity','notices','messages','rooms'],
+    branch:    ['branch','leads','stage-dashboard','my-clients','activity','notices','messages','rooms'],
+    team:      ['leads','stage-dashboard','my-leads','my-clients','activity','notices','messages','rooms'],
+    tm:        ['tm-panel','notices','messages','rooms'],
   };
   const role = curUser?.role;
   const allowed = ALLOWED[role] || [];
@@ -5158,7 +5197,7 @@ function showScreen(id, btn){
     'admin':loadAdmin,'insights':loadInsights,'leads':loadLeads,'my-leads':loadMyLeads,'my-clients':loadMyClients,
     'settings':loadSettings,'tm-panel':loadTmPanel,'branch':loadBranchScreen,'activity':loadActivityScreen,'notices':loadNoticesScreen,
     'stage-dashboard':loadStageDashboard,'dj-status':loadDjStatus,'messages':loadMessages,
-    'users':loadUsersScreen
+    'users':loadUsersScreen,'rooms':loadRoomScreen
   }[id]||function(){})();
 }
 
@@ -5472,6 +5511,98 @@ function showToast(msg,type=''){const el=document.getElementById('toast');if(!el
 // ── Modal / Overlay ───────────────────────────────────────
 function openM(id){document.getElementById(id)?.classList.add('open');}
 function closeM(id){document.getElementById(id)?.classList.remove('open');}
+
+// ═══════════════ 회의실 예약 ═══════════════
+const ROOMS = ['소회의실1','소회의실2','대회의실','강의장'];
+const ROOM_OPEN_MIN = 8*60;    // 08:00
+const ROOM_CLOSE_MIN = 22*60;  // 22:00
+const ROOM_SLOT = 30;          // 30분 단위
+let _roomCache = [];           // 선택 날짜의 active 예약
+
+function _minToHHMM(m){ const h=Math.floor(m/60), mm=m%60; return String(h).padStart(2,'0')+':'+String(mm).padStart(2,'0'); }
+function _roomDateEl(){ return document.getElementById('room-date'); }
+function roomDateShift(d){ const el=_roomDateEl(); if(!el) return; const base=el.value?new Date(el.value+'T00:00:00'):new Date(); base.setDate(base.getDate()+d); el.value=base.toISOString().slice(0,10); loadRoomScreen(); }
+
+async function loadRoomScreen(){
+  const el=_roomDateEl();
+  if(el && !el.value){ el.value = todayKst(); }
+  const date = (el && el.value) || todayKst();
+  const grid = document.getElementById('room-grid');
+  if(grid) grid.innerHTML = '<div style="padding:30px;text-align:center;color:var(--gray-400)">불러오는 중…</div>';
+  try{ _roomCache = await sbGet('room_reservations?res_date=eq.'+date+'&status=eq.active&order=start_min.asc') || []; }
+  catch(e){ _roomCache=[]; }
+  _renderRoomGrid();
+}
+
+function _renderRoomGrid(){
+  const grid=document.getElementById('room-grid'); if(!grid) return;
+  const real=(typeof _impersonator!=='undefined' && _impersonator) || curUser;
+  const isAdmin = real && real.role==='admin';
+  grid.innerHTML = ROOMS.map(function(room){
+    const list=_roomCache.filter(function(r){return r.room===room;}).sort(function(a,b){return a.start_min-b.start_min;});
+    const chips = list.length ? list.map(function(r){
+      const mine = r.reserved_by===curUser.name;
+      const canCancel = mine || isAdmin;
+      let att=''; try{ const a=JSON.parse(r.attendees||'[]'); if(a.length) att=' · 참석 '+a.length+'명'; }catch(e){}
+      return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--gray-200);border-radius:8px;margin-bottom:6px;background:var(--gray-50)">'
+        + '<span style="font-weight:700;color:var(--navy);white-space:nowrap">'+_minToHHMM(r.start_min)+'–'+_minToHHMM(r.end_min)+'</span>'
+        + '<span style="flex:1;font-size:13px">'+esc(r.title||'(제목 없음)')+'<span style="color:var(--gray-400);font-size:12px"> · '+esc(r.reserved_by)+att+'</span></span>'
+        + (canCancel?'<button class="btn btn-xs" style="color:var(--err)" onclick="cancelRoomRes(\''+r.id+'\')">취소</button>':'')
+        + '</div>';
+    }).join('') : '<div style="padding:10px;color:var(--gray-400);font-size:13px">예약 없음</div>';
+    return '<div class="card" style="margin-bottom:14px;padding:14px">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
+      + '<div style="font-weight:800;font-size:15px;color:var(--navy)">'+room+'</div>'
+      + '<button class="btn btn-xs" onclick="openRoomBooking(\''+room+'\')">＋ 예약</button></div>'
+      + chips + '</div>';
+  }).join('');
+}
+
+function openRoomBooking(room){
+  document.getElementById('rb-room').value = room;
+  document.getElementById('rb-room-label').textContent = room;
+  document.getElementById('rb-date').value = (_roomDateEl() && _roomDateEl().value) || todayKst();
+  document.getElementById('rb-title').value = '';
+  const opts=[]; for(let m=ROOM_OPEN_MIN;m<=ROOM_CLOSE_MIN;m+=ROOM_SLOT){ opts.push('<option value="'+m+'">'+_minToHHMM(m)+'</option>'); }
+  const sEl=document.getElementById('rb-start'), eEl=document.getElementById('rb-end');
+  sEl.innerHTML = opts.slice(0,-1).join('');   // 마감시각은 시작에서 제외
+  eEl.innerHTML = opts.slice(1).join('');      // 개장시각은 종료에서 제외
+  sEl.value = String(9*60);   // 기본 09:00
+  eEl.value = String(10*60);  // 기본 10:00
+  document.getElementById('rb-warn').textContent='';
+  openM('modal-room-book');
+}
+
+async function submitRoomBooking(){
+  const room=document.getElementById('rb-room').value;
+  const date=document.getElementById('rb-date').value;
+  const startMin=parseInt(document.getElementById('rb-start').value,10);
+  const endMin=parseInt(document.getElementById('rb-end').value,10);
+  const title=(document.getElementById('rb-title').value||'').trim();
+  const warn=document.getElementById('rb-warn'); warn.textContent='';
+  if(!(endMin>startMin)){ warn.textContent='종료 시각이 시작보다 늦어야 합니다.'; return; }
+  // ★ 충돌 검사 — 캐시가 아니라 서버에 지금 직접 묻는다 (이중 부킹 방지의 급소)
+  let existing=[];
+  try{ existing = await sbGet('room_reservations?room=eq.'+encodeURIComponent(room)+'&res_date=eq.'+date+'&status=eq.active') || []; }
+  catch(e){ warn.textContent='서버 확인 실패. 다시 시도해 주세요.'; return; }
+  const clash = existing.find(function(r){ return startMin < r.end_min && endMin > r.start_min; });
+  if(clash){ warn.textContent='이미 예약됨: '+_minToHHMM(clash.start_min)+'–'+_minToHHMM(clash.end_min)+' ('+clash.reserved_by+')'; return; }
+  const res = await sbPost('room_reservations', { room:room, res_date:date, start_min:startMin, end_min:endMin, title:title, reserved_by:curUser.name, attendees:'[]', status:'active' });
+  if(res){ closeM('modal-room-book'); showToast('예약되었습니다','success'); loadRoomScreen(); }
+  else{ warn.textContent='저장 실패. 다시 시도해 주세요.'; }
+}
+
+async function cancelRoomRes(id){
+  const r=_roomCache.find(function(x){return x.id===id;});
+  const real=(typeof _impersonator!=='undefined' && _impersonator) || curUser;
+  const isAdmin = real && real.role==='admin';
+  if(r && r.reserved_by!==curUser.name && !isAdmin){ showToast('본인 예약만 취소할 수 있습니다','error'); return; }
+  if(!confirm('이 예약을 취소하시겠습니까?')) return;
+  const ok = await sbPatch('room_reservations', id, {status:'cancelled'});
+  if(ok){ showToast('취소되었습니다','success'); loadRoomScreen(); }
+  else showToast('취소 실패','error');
+}
+
 function openOv(id){document.getElementById(id)?.classList.add('open');}
 function closeOv(id){document.getElementById(id)?.classList.remove('open');}
 
@@ -6910,7 +7041,7 @@ function renderRecallWarning(lastMap){
     if(!el) return;
     let cands=[]; try{ cands=_rcCandidates()||[]; }catch(_e){}
     if(!lastMap){ try{ lastMap=_rcBuildLastActMapFromCache(); }catch(_e){ lastMap=new Map(); } }
-    const NOW=Date.now(), H48=48*3600*1000;
+    const NOW=Date.now();
     let imminent=0, over=0;
     const byBranch={}, byStage={'배정 미접촉':0,'접촉·상담':0,'관리':0};
     const list=[];
@@ -6922,11 +7053,11 @@ function renderRecallWarning(lastMap){
       let ratio=0, scat='', remain='';
       if(stage==='관리'){
         const base=lastMs!==undefined?lastMs:assignedMs;
-        const bd=bizElapsedDays(base,NOW); ratio=bd/30; scat='관리'; remain=(30-bd)+'영업일';
+        const bd=bizElapsedDays(base,NOW); ratio=bd/RECALL.MANAGE_BIZDAYS; scat='관리'; remain=(RECALL.MANAGE_BIZDAYS-bd)+'영업일';
       } else if(lastMs===undefined){
-        const bh=bizElapsedMs(assignedMs,NOW)/3600000; ratio=bh/48; scat='배정 미접촉'; remain=Math.max(0,Math.round(48-bh))+'시간';
+        const bh=bizElapsedMs(assignedMs,NOW)/3600000; ratio=bh/RECALL.ASSIGN_BIZHOURS; scat='배정 미접촉'; remain=Math.max(0,Math.round(RECALL.ASSIGN_BIZHOURS-bh))+'시간';
       } else {
-        const bd=bizElapsedDays(lastMs,NOW); ratio=bd/5; scat='접촉·상담'; remain=Math.max(0,(5-bd))+'영업일';
+        const bd=bizElapsedDays(lastMs,NOW); ratio=bd/RECALL.CONTACT_BIZDAYS; scat='접촉·상담'; remain=Math.max(0,(RECALL.CONTACT_BIZDAYS-bd))+'영업일';
       }
       if(ratio>=1.0){ over++; }
       else if(ratio>=0.7){
@@ -8035,7 +8166,7 @@ function _overdue30Count(){
     if(['계약','관리','드랍','보류'].includes(l.current_stage||'')) return false;
     if(l.yj_transferred||l.tm_transferred) return false;
     const _t=_lastMap.get(l.id)||new Date(l.assigned_at||l.created_at||0).getTime();
-    return bizElapsedMs(_t,_now)>=30*3600000;
+    return bizElapsedMs(_t,_now)>=UNREC_WARN_BIZHOURS*3600000;
   }).length;
 }
 // 지점장 회수대상 건수 (자기 지점 소속) — _rcCandidates+_rcJudge 미러링
@@ -8210,7 +8341,7 @@ function filterLeads(){
       if(l.yj_transferred||l.tm_transferred) return false;
       // 마지막 활동기록 있으면 그 시각 기준, 없으면 배정일 기준
       const _lastT=_lastActMap.get(l.id)||new Date(l.assigned_at||l.created_at||0).getTime();
-      return bizElapsedMs(_lastT,_now30)>=30*3600000;
+      return bizElapsedMs(_lastT,_now30)>=UNREC_WARN_BIZHOURS*3600000;
     });
   }
   else if(_quickTab==='djmanage'){
@@ -10001,7 +10132,7 @@ function renderBrTodayTodo(targetId){
   const overdueMeets=nas.filter(a=>a.due_date&&a.due_date<today&&a.action_type==='미팅');
 
   // 30시간 미기록
-  const H30=30*3600*1000; const now=Date.now();
+  const H30=UNREC_WARN_BIZHOURS*3600*1000; const now=Date.now();
   const acts=allActivities||[];
   const warn30=(brAllLeads||[]).filter(l=>{
     if(!false) return false;
@@ -10469,23 +10600,12 @@ function filterMyLeads(){
     const naL=na?`<span style="font-size:10px;color:${na.due_date<today?'var(--err)':na.due_date===today?'var(--warn)':'var(--blue)'};">${fmtD(na.due_date)} ${esc(na.action_type)}</span>`:'-';
     const lid=l.id, lname=esc(l.company_name||'');
     // 미기록 여부
-    const isUnrecorded=!recorded.has(l.id)&&false;
-    const assignedAt=new Date(l.assigned_at||l.created_at||0).getTime();
-    const _elapsed=bizElapsedMs(assignedAt,Date.now());
-    const isOverdue48=isUnrecorded&&_elapsed>=48*3600000;
-    const isOverdue30=isUnrecorded&&_elapsed>=30*3600000&&!isOverdue48;
-    const isOverdue24=isUnrecorded&&_elapsed>=24*3600000&&!isOverdue30&&!isOverdue48;
-    const rowCls=isOverdue48?'overdue-48h-row unrecorded-row':isOverdue30?'overdue-30h-row unrecorded-row':isOverdue24?'overdue-24h-row unrecorded-row':isUnrecorded?'unrecorded-row':''
-    // 미기록 아이콘
-    const unrecIcon=isUnrecorded
-      ?`<span title="활동 기록 없음 — 클릭하여 기록" style="color:var(--err);font-size:11px;margin-left:4px"><svg class="li" viewBox="0 0 24 24" style="color:#e8870f"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.9a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg></span>`
-      :'';
-    return`<tr onclick="myLeadsRowClick(event,'${lid}','${lname}',${isUnrecorded})" class="${rowCls}" style="cursor:pointer">
-      <td style="font-weight:700;color:${isUnrecorded?'var(--err)':'var(--navy)'}">
+    return`<tr onclick="myLeadsRowClick(event,'${lid}','${lname}',false)" class="" style="cursor:pointer">
+      <td style="font-weight:700;color:var(--navy)">
         ${getFavs().includes(l.id)?'<span style="color:#f59e0b;font-size:11px;margin-right:2px"><svg class="li" viewBox="0 0 24 24"><path d="M12 3l2.7 5.5 6 .9-4.3 4.2 1 6L12 17l-5.4 2.6 1-6L3.3 9.4l6-.9z"/></svg></span>':''}
         ${(()=>{const g=calcLeadGrade(l,acts);return`<span style="font-size:9px;padding:1px 5px;border-radius:8px;background:${g.bg};color:${g.color};font-weight:700;margin-right:4px">${g.label}</span>`;})()}
         ${atrisk.has(l.id)?'<span title="14일+ 미접촉" style="color:var(--err);font-size:10px"><svg class="li" viewBox="0 0 24 24" style="color:#e8870f"><path d="M5 18v-6a7 7 0 0 1 14 0v6"/><path d="M3 18h18M11 3h2"/></svg></span>':''}
-        ${esc(l.company_name||'-')}${unrecIcon}</td>
+        ${esc(l.company_name||'-')}</td>
       <td>${esc(l.contact_name||'-')}</td>
       <td style="font-size:12px">${esc(l.phone||'-')}</td>
       <td style="font-size:11px">${esc((l.consult_type||'-').slice(0,18))}</td>
@@ -10648,6 +10768,7 @@ async function importTmExcel(event){
   // Supabase에서 전화번호 목록 직접 조회
   let _dbPhoneSet = new Set();
   let _dbNameSet  = new Set();
+  let _dbPhoneStatus = new Map();  // 전화번호 → {status, stage, name} (재콜 판정용)
   try{
     if(!testMode&&_excelPhones.length){
       // 전화번호 IN 쿼리 (100개씩)
@@ -10656,7 +10777,7 @@ async function importTmExcel(event){
         _chunks.push(_excelPhones.slice(ci,ci+100));
       for(const chunk of _chunks){
         const _q=chunk.map(p=>`"${p}"`).join(',');
-        const _r=await fetch(SB_URL+'/rest/v1/leads?select=phone,company_name&status=neq.deleted',{
+        const _r=await fetch(SB_URL+'/rest/v1/leads?select=phone,company_name,status,current_stage&status=neq.deleted',{
           headers:{...sbH(),'Range-Unit':'items','Range':'0-4999','Prefer':'count=none'}
         });
         if(_r.ok){
@@ -10664,6 +10785,7 @@ async function importTmExcel(event){
           (_rows||[]).forEach(l=>{
             const ph=String(l.phone||'').replace(/[^0-9]/g,'');
             if(ph.length>=9) _dbPhoneSet.add(ph);
+            if(ph.length>=9) _dbPhoneStatus.set(ph, {status:l.status, stage:l.current_stage, name:l.company_name});
             const nm=String(l.company_name||'').trim();
             if(nm) _dbNameSet.add(nm);
           });
@@ -10676,6 +10798,7 @@ async function importTmExcel(event){
   (allLeads||[]).forEach(l=>{
     const ph=String(l.phone||'').replace(/[^0-9]/g,'');
     if(ph.length>=9) _dbPhoneSet.add(ph);
+    if(ph.length>=9){ if(!_dbPhoneStatus.has(ph)) _dbPhoneStatus.set(ph, {status:l.status, stage:l.current_stage, name:l.company_name}); }
     const nm=String(l.company_name||'').trim();
     if(nm) _dbNameSet.add(nm);
   });
@@ -10711,6 +10834,9 @@ async function importTmExcel(event){
   });
 
   const _pendingPatch=[]; // 기존 lead에 대전TM 이관할 건들
+  const _blocked=[];      // ★ 진행중이라 재콜 차단된 건 (경고 표시용)
+  // 재콜 허용 상태: 드랍/삭제(및 미조회=신규취급)만 허용, 진행중은 차단
+  const _isRecallable=(st)=>{ const s=String(st||'').toLowerCase(); return s==='drop'||s==='dropped'||s==='deleted'||s===''; };
   const existSet=_dbPhoneSet; // 기존 변수명 유지
   for(let i=1;i<rows.length;i++){
     const row=rows[i];
@@ -10719,15 +10845,18 @@ async function importTmExcel(event){
     const ph=String(map.phone||'').trim().replace(/[^0-9]/g,'');
     const _phNorm=ph.replace(/[^0-9]/g,'');
 
-    // 기존 DB가 있으면 신규 생성 대신 기존 건을 대전TM으로 이관
-    if(_phNorm.length>=9&&_dbLeadMap.has(_phNorm)){
-      const existLead=_dbLeadMap.get(_phNorm);
-      // 이미 대전TM 이관 중인 건은 skip
-      if(existLead.tm_transferred===true||existLead.tm_transferred==='true'){dup++;continue;}
-      // 기존 건을 대전TM으로 이관 예약
-      _pendingPatch.push({id:existLead.id, company_name:existLead.company_name||co});
-      dup++;
-      continue;
+    // ★ 재콜 중복 판정: 전화번호가 이미 존재하면 상태 확인 (운영본 재콜 기능 이식)
+    if(_phNorm.length>=9&&_dbPhoneSet.has(_phNorm)){
+      const _info=_dbPhoneStatus.get(_phNorm);
+      const _st=_info?.status;
+      if(_isRecallable(_st)){
+        // 드랍/삭제 상태 → 재콜 대상. 신규로 등록 (아래로 진행)
+      }else{
+        // 진행중(배정~관리·보류 등) → 재콜 차단 + 경고 수집
+        _blocked.push({ company:co, phone:formatPhone(map.phone||''), exist_name:_info?.name||'', stage:_info?.stage||_st||'진행중' });
+        dup++;
+        continue;
+      }
     }
     if(_phNorm.length<9&&co&&_dbNameSet.has(co)){dup++;continue;}
     _pending.push({
@@ -10769,6 +10898,16 @@ async function importTmExcel(event){
   const _warnEl=document.getElementById('import-warn');
   if(!_sumEl||!_headEl||!_bodyEl){showToast('미리보기 UI 오류','error');return;}
   _sumEl.innerHTML=`<strong>${_pending.length}건</strong> 등록 예정 · <span style="color:#7c3aed">대전TM 자동배정</span>${dup?` · <span style="color:var(--gray-400)">중복제외 ${dup}건</span>`:''}  `;
+  // ★ 진행중이라 재콜 차단된 건 경고 (한 고객 중복 전화 방지) — 운영본 재콜 기능 이식
+  if(_blocked&&_blocked.length){
+    const _list=_blocked.slice(0,15).map(b=>`<div style="font-size:11px;color:#9a3412;margin-top:3px;padding-left:2px">· ${esc(b.phone||'-')} <strong>${esc(b.company||'')}</strong> — 이미 진행중(${esc(String(b.stage||''))})${b.exist_name&&b.exist_name!==b.company?` · 기존: ${esc(b.exist_name)}`:''}</div>`).join('');
+    const _more=_blocked.length>15?`<div style="font-size:10px;color:#c2410c;margin-top:4px">…외 ${_blocked.length-15}건</div>`:'';
+    _sumEl.innerHTML += `<div style="margin-top:10px;padding:10px 12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px">
+      <div style="font-size:12px;font-weight:800;color:#c2410c">⚠️ 재콜 차단 ${_blocked.length}건 — 이미 진행중인 고객입니다</div>
+      <div style="font-size:10px;color:#9a3412;margin:4px 0 6px">아래 건은 다른 담당이 진행중이라 재콜 대상에서 제외됩니다. (중복 전화로 고객 불신 방지)</div>
+      ${_list}${_more}
+    </div>`;
+  }
   const PCOLS=['company_name','contact_name','phone','region','consult_type'];
   _headEl.innerHTML='<tr>'+PCOLS.map(col=>`<th style="padding:8px 10px">${col}</th>`).join('')+'</tr>';
   _bodyEl.innerHTML=_pending.slice(0,20).map(r=>'<tr>'+PCOLS.map(col=>`<td style="padding:7px 10px;border-bottom:1px solid var(--gray-100)">${esc(r[col]||'-')}</td>`).join('')+'</tr>').join('');
@@ -10782,16 +10921,17 @@ const _TM_STATUS_KR = {pending:'미배정', assigned:'배정', contacted:'통화
 // TM 탭 → 한글 이름
 const _TM_TAB_KR = {all:'관리DB', new:'신규배정', contacted:'통화완료', happycall:'해피콜', drop:'드랍', recalldone:'재콜', tmdone:'본사이관완료', scheduled:'미팅예정'};
 
+function _stripSvg(s){
+  return String(s||'').replace(/<svg[\s\S]*?<\/svg>/gi,'').replace(/\s{2,}/g,' ').trim();
+}
 async function openTmExport(){
   if(!window.XLSX){await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';s.onload=res;s.onerror=rej;document.head.appendChild(s);});}
   // 현재 탭 정보
-  const curTab = _tmMainTab || 'all';
+  const curTab = _tmV2Tab || 'all';
   const curTabKr = _TM_TAB_KR[curTab] || '현재탭';
-  // 현재 탭 필터 결과 (검색어·지점필터 반영)
-  const _s = (document.getElementById('tm-search')?.value||'').toLowerCase();
-  const _br = document.getElementById('tm-branch-filter')?.value || '';
-  const curData = _filterForTab(curTab, _s, _br);
-  const allData = tmLeads.filter(l=>!isTmCompleted(l));
+  // ★ 화면 탭과 완전히 동일한 함수(_tmV2Filter)·탭변수(_tmV2Tab)로 통일 — 탭 숫자 = 다운로드 대상수
+  const curData = _tmV2Filter(curTab);
+  const allData = (_tmV2Data||[]).slice();
   // 확인 모달: 전체 / 현재탭만 선택
   const choice = await new Promise(resolve=>{
     const ov=document.createElement('div');
@@ -10822,7 +10962,24 @@ async function openTmExport(){
   const data = choice==='cur' ? curData : allData;
   const scopeKr = choice==='cur' ? curTabKr : '전체';
   if(!data.length){showToast('내보낼 데이터가 없습니다.','error');return;}
-  const rows=[['회사명','신청자','연락처','지점','팀장','상태','TM결과','TM날짜','1차미팅일','TM내용','해피콜내용','분배날짜']];
+  // 기업 히스토리: 그 리드의 활동기록을 시간순으로 이어붙임 (운영본 기능 이식)
+  const _actByLead = {};
+  (allActivities||[]).forEach(a=>{
+    if(!a.lead_id) return;
+    if(a.type==='assign'||a.type==='status_change') return;
+    (_actByLead[a.lead_id]=_actByLead[a.lead_id]||[]).push(a);
+  });
+  const _histText=(id)=>{
+    const arr=(_actByLead[id]||[]).slice().sort((x,y)=>String(x.created_at||x.date||'').localeCompare(String(y.created_at||y.date||'')));
+    if(!arr.length) return '';
+    return arr.map(a=>{
+      const d=String(a.date||a.created_at||'').slice(0,10);
+      const who=a.author||'';
+      const txt=_stripSvg(a.content||'').replace(/\s+/g,' ').trim();
+      return `[${d} ${who}] ${txt}`;
+    }).join(' / ');
+  };
+  const rows=[['회사명','신청자','연락처','지점','팀장','상태','TM결과','TM날짜','1차미팅일','TM내용','해피콜내용','분배날짜','기업 히스토리']];
   data.forEach(l=>rows.push([
     l.company_name||'', l.contact_name||'', l.phone||'',
     l.branch_name||'', l.team_name||'',
@@ -10830,11 +10987,12 @@ async function openTmExport(){
     _TM_STATUS_KR[l.tm_result]||l.tm_result||'',
     l.tm_date||'', l.tm_meeting||'',
     l.tm_content||'', l.tm_happycall||'',
-    (l.distributed_at||l.created_at||'').slice(0,10)
+    (l.distributed_at||l.created_at||'').slice(0,10),
+    _histText(l.id)
   ]));
   const wb=XLSX.utils.book_new();
   const ws=XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols']=[20,12,14,10,12,8,10,10,10,30,20,10].map(w=>({wch:w}));
+  ws['!cols']=[20,12,14,10,12,8,10,10,10,30,20,10,60].map(w=>({wch:w}));
   XLSX.utils.book_append_sheet(wb, ws, ('대전TM_'+scopeKr).slice(0,31));
   XLSX.writeFile(wb, `대전TM_${scopeKr}_${todayKst()}.xlsx`);
   showToast(`엑셀 다운로드 완료 — ${scopeKr} ${data.length}건`,'success');
@@ -17248,7 +17406,7 @@ function showDailyBriefing(){
   const unrec=role==='team'?leads.filter(l=>{
     if(!false) return false;
     const t=new Date(l.assigned_at||l.created_at||0).getTime();
-    return bizElapsedMs(t,now)>=30*3600*1000;
+    return bizElapsedMs(t,now)>=UNREC_WARN_BIZHOURS*3600*1000;
   }):[];
 
   const sections=[];
@@ -17363,16 +17521,10 @@ function showDailyBriefing(){
   if(role==='branch'){
     const myTeams=TEAM_MAP[curUser.name]||[];
     const unassigned=(brAllLeads||[]).filter(l=>!l.team_name&&!['drop','deleted'].includes(l.status)&&!['드랍','보류'].includes(l.current_stage||''));
-    const brUnrec=(brAllLeads||[]).filter(l=>false&&bizElapsedMs(new Date(l.assigned_at||l.created_at||0).getTime(),now)>=30*3600*1000);
     if(unassigned.length) sections.push(`
       <div style="padding:10px 14px;background:rgba(245,158,11,.07);border-radius:8px;border-left:3px solid var(--warn)">
         <div style="font-size:12px;font-weight:700;color:var(--warn);margin-bottom:4px"><svg class="li" viewBox="0 0 24 24"><path d="M12 4v12M8 12l4 4 4-4"/><path d="M4 18v1a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-1"/></svg> 팀장 미배정 DB ${unassigned.length}건</div>
         <div style="font-size:11px;color:var(--gray-500)">빠른 배정이 필요합니다</div>
-      </div>`);
-    if(brUnrec.length) sections.push(`
-      <div style="padding:10px 14px;background:rgba(239,68,68,.07);border-radius:8px;border-left:3px solid var(--err)">
-        <div style="font-size:12px;font-weight:700;color:var(--err);margin-bottom:4px"><svg class="li" viewBox="0 0 24 24" style="color:#e8870f"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.9a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg> 30h+ 미기록 DB ${brUnrec.length}건</div>
-        <div style="font-size:11px;color:var(--gray-500)">${brUnrec.slice(0,3).map(l=>esc(l.company_name)).join(', ')}${brUnrec.length>3?' 외 '+(brUnrec.length-3)+'건':''}</div>
       </div>`);
   }
 
@@ -18442,8 +18594,8 @@ function _tmV2Filter(tab){
       case 'collab':       return isCollab&&!isDrop&&!isHqTransferred&&!isReminderPending&&!isReminderDue;
       case 'contacted':    return isTmSolo&&isContacted&&!isHqTransferred&&!isReminderPending&&!isReminderDue;
       case 'happycall':    return isAnyTm&&hasHappycall&&!isDrop&&!isHqTransferred&&!isReminderPending&&!isReminderDue;
-      case 'drop':         return isAnyTm&&isDrop&&!isHqTransferred;
-      case 'hqtransfer':   return isHqTransferred; // 본사이관완료 — 모두 표시
+      case 'drop':         return isAnyTm&&isDrop;  // ★ 본사이관완료여도 드랍이면 드랍탭으로 통합
+      case 'hqtransfer':   return isHqTransferred&&!isDrop; // ★ 드랍된 건은 드랍탭으로 이동
       case 'reminder':     return isAnyTm&&isReminderDue&&!isDrop&&!isHqTransferred; // 도래한 리마인드만
       default:             return isAnyTm&&!isReminderPending;
     }
@@ -19994,7 +20146,7 @@ function updateLeadsStatsMini(){
 function renderAssignSummary(all){
   const tbody=document.getElementById('assign-summary-tbody'); if(!tbody) return;
   const acts=allActivities||[];
-  const now=Date.now(); const H30=30*3600*1000;
+  const now=Date.now(); const H30=UNREC_WARN_BIZHOURS*3600*1000;
   const rows=[...BRANCHES,'미배정'].map(b=>{
     const bl=b==='미배정'
       ? all.filter(l=>(!l.branch_name||l.branch_name==='')
@@ -21355,8 +21507,8 @@ function _rcBuildLastActMapFromCache(){
 // 반환: {code,weight,text,bg} | null
 function _rcJudge(lead, lastMs){
   const NOW   = Date.now();
-  const H48   = 48  * 3600 * 1000; // ms
-  const BD5   = 5; // 5영업일
+  const H48   = RECALL.ASSIGN_BIZHOURS * 3600 * 1000; // ms
+  const BD5   = RECALL.CONTACT_BIZDAYS; // 5영업일
 
   const stage = String(lead.current_stage||'').trim();
   const assignedMs = new Date(lead.assigned_at).getTime();
@@ -21366,7 +21518,7 @@ function _rcJudge(lead, lastMs){
   if(stage==='관리'){
     const baseMs = lastMs!==undefined ? lastMs : assignedMs;
     const bd = bizElapsedDays(baseMs, NOW);
-    if(bd>30) return {code:'C',weight:3,
+    if(bd>RECALL.MANAGE_BIZDAYS) return {code:'C',weight:3,
       text:`<svg class="li" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M9 7h.01M15 7h.01M9 11h.01M15 11h.01M9 15h2M13 15h2"/></svg> 마지막 기록 ${bd}영업일 경과 (기준 30일)`,bg:''};
     return null;
   }
@@ -25134,7 +25286,7 @@ function renderLeadsTable(){
       _rc2='overdue-48h-row';
     } else if(_isCand && (l.current_stage||'')!=='관리'){
       if(_lastMsR===undefined){
-        if(_el2>=30*3600000) _rc2='overdue-24h-row';
+        if(_el2>=UNREC_WARN_BIZHOURS*3600000) _rc2='overdue-24h-row';
       } else if(bizElapsedDays(_lastMsR,_now2)>=3){
         _rc2='overdue-24h-row';
       }
