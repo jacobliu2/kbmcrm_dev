@@ -1308,6 +1308,12 @@
     <div id="screen-settings" class="screen">
       <div class="page-header"><div class="page-title">관리자 설정</div></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <!-- 사용자 관리 (네비에서 설정으로 이동) -->
+        <div class="card" style="grid-column:1/-1">
+          <div class="section-title"><svg class="li" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg> 사용자 관리</div>
+          <div style="font-size:12px;color:var(--gray-500);margin-bottom:12px">직원 계정을 추가·수정하고 권한을 관리합니다.</div>
+          <button class="btn btn-primary btn-sm" onclick="showScreen('users')"><svg class="li" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg> 사용자 관리 열기</button>
+        </div>
         <!-- TM 초기탭 설정 (TM 권한) -->
         <div class="card" id="tm-default-tab-card">
           <div class="section-title"><svg class="li" viewBox="0 0 24 24"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.6a2 2 0 0 1-.4 2.1L8 9.6a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.4c.8.3 1.7.5 2.6.6a2 2 0 0 1 1.7 2z"/></svg>TM 센터 초기 탭 설정</div>
@@ -2258,6 +2264,7 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS auto_recall_reason text;</div>
       <button class="btn btn-outline btn-xs" onclick="roomDateShift(-1)">◀ 어제</button>
       <input type="date" id="room-date" onchange="loadRoomScreen()" style="padding:8px 10px;border:1.5px solid var(--gray-200);border-radius:8px;font-size:14px">
       <button class="btn btn-outline btn-xs" onclick="roomDateShift(1)">내일 ▶</button>
+      <button class="btn btn-xs" onclick="openRoomBooking()">＋ 새 예약</button>
     </div>
     <div id="room-grid"></div>
   </div>
@@ -2692,13 +2699,15 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS auto_recall_reason text;</div>
 <div class="modal-overlay" id="modal-room-book">
   <div class="modal" style="width:440px;max-width:94vw">
     <div class="mh"><div class="mt">회의실 예약</div></div>
-    <input type="hidden" id="rb-room">
-    <input type="hidden" id="rb-date">
     <div class="form-grid">
-      <div class="fg full"><label>회의실</label><div id="rb-room-label" style="font-weight:800;color:var(--navy);font-size:15px"></div></div>
+      <div class="fg full"><label>회의실</label><select id="rb-room" onchange="_rbRefreshExisting()"></select></div>
+      <div class="fg full"><label>날짜</label><input type="date" id="rb-date" onchange="_rbRefreshExisting()"></div>
       <div class="fg"><label>시작</label><select id="rb-start"></select></div>
       <div class="fg"><label>종료</label><select id="rb-end"></select></div>
       <div class="fg full"><label>용도 / 회의명</label><input type="text" id="rb-title" placeholder="예: 주간 영업회의"></div>
+      <div class="fg"><label>반복</label><select id="rb-recur" onchange="_rbRecurToggle()"><option value="none">반복 없음</option><option value="weekly">매주 (같은 요일)</option><option value="daily">매일</option></select></div>
+      <div class="fg" id="rb-count-wrap" style="display:none"><label>반복 횟수 (첫 예약 포함)</label><input type="number" id="rb-count" min="2" max="30" value="4"></div>
+      <div class="fg full"><div id="rb-existing" style="font-size:12px;color:var(--gray-500);min-height:16px"></div></div>
       <div class="fg full"><div id="rb-warn" style="color:var(--err);font-size:13px;min-height:18px"></div></div>
     </div>
     <div class="mf"><button class="btn btn-outline" onclick="closeM('modal-room-book')">닫기</button><button class="btn" onclick="submitRoomBooking()">예약</button></div>
@@ -4952,6 +4961,8 @@ const NAV_CFG = {
 };
 // 회의실 예약 — 전 역할 네비에 추가
 try{ Object.keys(NAV_CFG).forEach(function(r){ if(!NAV_CFG[r].some(function(n){return n.id==='rooms';})) NAV_CFG[r].push({id:'rooms', l:'<svg class="li" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M8 4v3M16 4v3"/></svg> 회의실'}); }); }catch(e){}
+// 사용자 관리는 설정 안으로 이동 — 관리자 네비에서 제거 (화면 접근은 설정 카드로 유지)
+try{ if(NAV_CFG.admin) NAV_CFG.admin = NAV_CFG.admin.filter(function(n){return n.id!=='users';}); }catch(e){}
 const RL={admin:'관리자',dbmanager:'DB관리자',branch:'지점장',team:'팀장',tm:'대전TM'};
 
 // ── KBMC CRM 로고 클릭 → 역할별 메인화면으로 이동 ───────────────
@@ -5559,10 +5570,14 @@ function _renderRoomGrid(){
 }
 
 function openRoomBooking(room){
-  document.getElementById('rb-room').value = room;
-  document.getElementById('rb-room-label').textContent = room;
+  const _rEl=document.getElementById('rb-room');
+  _rEl.innerHTML = ROOMS.map(function(r){return '<option value="'+r+'">'+r+'</option>';}).join('');
+  _rEl.value = room || ROOMS[0];
   document.getElementById('rb-date').value = (_roomDateEl() && _roomDateEl().value) || todayKst();
   document.getElementById('rb-title').value = '';
+  document.getElementById('rb-recur').value = 'none';
+  document.getElementById('rb-count').value = '4';
+  document.getElementById('rb-count-wrap').style.display = 'none';
   const opts=[]; for(let m=ROOM_OPEN_MIN;m<=ROOM_CLOSE_MIN;m+=ROOM_SLOT){ opts.push('<option value="'+m+'">'+_minToHHMM(m)+'</option>'); }
   const sEl=document.getElementById('rb-start'), eEl=document.getElementById('rb-end');
   sEl.innerHTML = opts.slice(0,-1).join('');   // 마감시각은 시작에서 제외
@@ -5570,7 +5585,25 @@ function openRoomBooking(room){
   sEl.value = String(9*60);   // 기본 09:00
   eEl.value = String(10*60);  // 기본 10:00
   document.getElementById('rb-warn').textContent='';
+  _rbRefreshExisting();
   openM('modal-room-book');
+}
+function _rbRecurToggle(){
+  const v=document.getElementById('rb-recur').value;
+  document.getElementById('rb-count-wrap').style.display = (v==='none')?'none':'';
+}
+// 선택한 방·날짜의 기존 예약을 모달 안에 보여준다 (빈 시간 눈으로 확인 — 흐름 매끄럽게)
+async function _rbRefreshExisting(){
+  const box=document.getElementById('rb-existing'); if(!box) return;
+  const room=document.getElementById('rb-room').value;
+  const date=document.getElementById('rb-date').value;
+  if(!room||!date){ box.innerHTML=''; return; }
+  box.textContent='이 방 예약 확인 중…';
+  let list=[];
+  try{ list = await sbGet('room_reservations?room=eq.'+encodeURIComponent(room)+'&res_date=eq.'+date+'&status=eq.active&order=start_min.asc') || []; }
+  catch(e){ box.innerHTML=''; return; }
+  if(!list.length){ box.innerHTML='<span style="color:var(--ok)">이 날 이 방은 비어 있습니다.</span>'; return; }
+  box.innerHTML='이미 예약됨 — '+list.map(function(r){return _minToHHMM(r.start_min)+'–'+_minToHHMM(r.end_min);}).join(', ');
 }
 
 async function submitRoomBooking(){
@@ -5579,19 +5612,37 @@ async function submitRoomBooking(){
   const startMin=parseInt(document.getElementById('rb-start').value,10);
   const endMin=parseInt(document.getElementById('rb-end').value,10);
   const title=(document.getElementById('rb-title').value||'').trim();
+  const recur=document.getElementById('rb-recur').value;
   const warn=document.getElementById('rb-warn'); warn.textContent='';
+  if(!date){ warn.textContent='날짜를 선택하세요.'; return; }
   if(!(endMin>startMin)){ warn.textContent='종료 시각이 시작보다 늦어야 합니다.'; return; }
-  // ★ 충돌 검사 — 캐시가 아니라 서버에 지금 직접 묻는다 (이중 부킹 방지의 급소)
+  // 반복 날짜 생성 (첫 예약 포함)
+  let count=1;
+  if(recur!=='none'){ count=Math.max(2, Math.min(30, parseInt(document.getElementById('rb-count').value,10)||1)); }
+  const dates=[]; const base=new Date(date+'T00:00:00');
+  for(let i=0;i<count;i++){ const d=new Date(base); if(recur==='weekly') d.setDate(d.getDate()+7*i); else if(recur==='daily') d.setDate(d.getDate()+i); dates.push(d.toISOString().slice(0,10)); }
+  // ★ 충돌 검사 — 캐시가 아니라 서버에 지금 직접 묻는다 (이중 부킹 방지의 급소). 반복이면 모든 회차를 한 번에 조회.
   let existing=[];
-  try{ existing = await sbGet('room_reservations?room=eq.'+encodeURIComponent(room)+'&res_date=eq.'+date+'&status=eq.active') || []; }
+  try{ existing = await sbGet('room_reservations?room=eq.'+encodeURIComponent(room)+'&res_date=in.('+dates.join(',')+')&status=eq.active') || []; }
   catch(e){ warn.textContent='서버 확인 실패. 다시 시도해 주세요.'; return; }
-  const clash = existing.find(function(r){ return startMin < r.end_min && endMin > r.start_min; });
-  if(clash){ warn.textContent='이미 예약됨: '+_minToHHMM(clash.start_min)+'–'+_minToHHMM(clash.end_min)+' ('+clash.reserved_by+')'; return; }
-  const res = await sbPost('room_reservations', { room:room, res_date:date, start_min:startMin, end_min:endMin, title:title, reserved_by:curUser.name, attendees:'[]', status:'active' });
-  if(res){ closeM('modal-room-book'); showToast('예약되었습니다','success'); loadRoomScreen(); }
-  else{ warn.textContent='저장 실패. 다시 시도해 주세요.'; }
+  const recurGroup = (count>1) ? ('rg_'+Date.now()+'_'+Math.random().toString(36).slice(2,7)) : null;
+  const toBook=[], skipped=[];
+  dates.forEach(function(d){
+    const clash = existing.find(function(r){ return r.res_date===d && startMin<r.end_min && endMin>r.start_min; });
+    if(clash) skipped.push(d); else toBook.push(d);
+  });
+  if(!toBook.length){ warn.textContent='선택한 날짜가 모두 이미 예약되어 있습니다.'; return; }
+  const rows = toBook.map(function(d){ return { room:room, res_date:d, start_min:startMin, end_min:endMin, title:title, reserved_by:curUser.name, attendees:'[]', recur_group:recurGroup, status:'active' }; });
+  const res = await sbPost('room_reservations', rows);
+  if(res){
+    closeM('modal-room-book');
+    let msg = toBook.length+'건 예약되었습니다';
+    if(skipped.length) msg += ' · '+skipped.length+'건은 이미 예약되어 건너뜀';
+    showToast(msg,'success');
+    const el=_roomDateEl(); if(el){ el.value=toBook[0]; }   // 방금 예약한 날짜로 화면 이동 (흐름 매끄럽게)
+    loadRoomScreen();
+  } else { warn.textContent='저장 실패. 다시 시도해 주세요.'; }
 }
-
 async function cancelRoomRes(id){
   const r=_roomCache.find(function(x){return x.id===id;});
   const real=(typeof _impersonator!=='undefined' && _impersonator) || curUser;
